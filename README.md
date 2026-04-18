@@ -1,110 +1,181 @@
-# Game Stream Recommendation System
+# Game Stream Recommender System
 
-A full data-to-product pipeline for recommending Steam games using:
+**Author:** Dev Desai (`DevDesai444`)
 
-1. Web crawling and Steam Web APIs for data collection
-2. Spark + ALS for recommendation modeling
-3. Flask + SQLAlchemy for user-facing delivery
+A full-stack recommendation system for Steam that moves from raw player discovery to a browsable recommendation experience. This project combines web crawling, Steam Web API ingestion, PySpark-based recommender modeling, relational persistence, and a Flask web interface to demonstrate how recommendation systems can be built as end-to-end products rather than isolated notebooks.
 
-This repository includes crawler scripts, sample datasets, Spark notebooks, web UI code, and architecture images.
+## Executive Summary
 
-## Creator / Author / Developer
+The goal of this project is to recommend games that a Steam user is likely to engage with next by learning from implicit behavioral signals such as ownership and cumulative playtime. The system supports two recommendation modes:
 
-**DevDesai444** (project owner and maintainer)
+1. A **global popularity recommender** that surfaces the most-played games across the collected player base.
+2. A **personalized collaborative filtering recommender** powered by Spark ALS that generates user-specific top-N recommendations.
 
-## Project Goal
+This repository is intentionally structured as a portfolio-quality systems project:
 
-Build a practical recommendation system that can:
+- `web_crawler/` collects and structures Steam player and game data.
+- `recommendation_engine/` transforms behavioral logs into model-ready features and trains recommendation models in Spark.
+- `web_ui/` exposes recommendation outputs through a lightweight Flask application.
+- `image/` contains supporting architecture and method visuals used throughout the project.
 
-1. Collect user and game interaction data from Steam
-2. Generate both global and personalized recommendations
-3. Serve results in a lightweight web application
+## Why This Project Matters
 
-## Architecture
+Game discovery is a difficult ranking problem. Large catalogs, rapidly changing user preferences, and sparse feedback make it hard to connect players with relevant content. Steam is an especially interesting environment because it naturally generates rich implicit signals:
+
+- game ownership
+- cumulative playtime
+- recent activity
+- social graph information
+- game metadata
+
+This project treats recommendation as a product engineering problem, not just a machine learning exercise. The system shows how raw platform data can be converted into usable recommendation outputs and then surfaced in an interface that real users can browse.
+
+## Problem Statement
+
+Given a set of Steam users, their owned games, their playtime, and basic game metadata, build a system that can:
+
+1. discover and index candidate users,
+2. collect their interaction data from Steam,
+3. transform raw JSON into a model-ready user-item matrix,
+4. generate both baseline and personalized recommendations,
+5. store recommendation results in a database, and
+6. display those recommendations in a simple web application.
+
+## Hypothesis
+
+The core hypothesis behind this repository is:
+
+> If a recommendation model is trained on implicit feedback derived from Steam ownership and playtime, then it can recover meaningful preference patterns and produce better personalized game suggestions than a one-size-fits-all popularity ranking.
+
+This hypothesis is supported by three assumptions:
+
+1. **Playtime is a stronger preference signal than ownership alone.** A user may own many games but meaningfully engage with only a subset.
+2. **Users with similar interaction histories will prefer similar games.** This is the standard collaborative filtering assumption.
+3. **A popularity baseline is useful but insufficient.** It works as a fallback, but personalization should better capture differences between players.
+
+## Architecture Overview
 
 ![Architecture](image/architecture.png)
 
-High-level flow:
+The project follows a staged offline-to-online architecture:
 
-1. Crawl Steam member pages to discover active users
-2. Fetch user/game data via Steam Web APIs
-3. Store raw JSON datasets
-4. Transform and join data in Spark SQL / Hive-style workflows
-5. Train an implicit-feedback ALS model
-6. Write recommendation outputs to MySQL (AWS RDS pattern)
-7. Render recommendations in Flask routes
+```mermaid
+flowchart LR
+    A["Steam Community member pages"] --> B["User discovery crawler"]
+    C["Steam Web APIs"] --> D["Raw JSON datasets"]
+    B --> D
+    D --> E["PySpark ETL and joins"]
+    E --> F["Popularity baseline"]
+    E --> G["ALS collaborative filtering"]
+    F --> H["MySQL recommendation tables"]
+    G --> H
+    H --> I["Flask + SQLAlchemy web UI"]
+    I --> J["Global and personalized recommendation pages"]
+```
 
-## What Is Used, How It Is Used, and Why It Is Used
+## System Design
 
-| Layer | Technology | How it is used | Why it is used |
-|---|---|---|---|
-| Data collection | `requests`, `urllib` | Calls Steam API endpoints and profile URLs | Reliable HTTP access to both API and HTML sources |
-| HTML parsing | `BeautifulSoup`, `re` | Parses Steam member pages to find online/in-game users and profile URLs | Steam does not expose all discovery paths via one API |
-| Concurrency | `threading`, `Queue` | Parallel user data fetch and thread-safe writer queue | Improves crawl throughput and protects file writes |
-| Raw storage | JSON lines files | Writes one JSON object per line for users/games/summaries | Stream-friendly, simple to process in Spark/Hive |
-| Data processing | PySpark, Spark SQL, HiveContext | Reads JSON, explodes arrays, joins datasets, filters noisy rows | Handles wide schemas and large-scale transforms |
-| Recommendation model | `pyspark.mllib.recommendation.ALS.trainImplicit` | Trains implicit collaborative filtering model from playtime signals | Good baseline for user-item implicit feedback |
-| Popularity baseline | Spark SQL aggregation | Sums playtime by app id for global top games | Simple, strong baseline and fallback recommender |
-| Result persistence | JDBC to MySQL | Writes `global_recommend` and `final_recommend` tables | Decouples offline model pipeline from online serving |
-| Web service | Flask + Flask-SQLAlchemy | Exposes routes for global and per-user recommendations | Fast to build and easy to deploy |
-| Serving entrypoint | WSGI (`flaskapp.wsgi`) | Imports Flask app for Apache/mod_wsgi style deployment | Production-friendly deployment integration |
-| Frontend | Jinja2 templates + static CSS/JS | Renders card-style recommendation pages with Steam links | Lightweight UI with no SPA overhead |
-| Infra pattern | AWS RDS + AWS EC2 (documented workflow) | Stores recommendation tables and hosts Flask app | Clear separation of compute, storage, and serving |
+### 1. Data Collection Layer
 
-## Repository Map
+The crawler first discovers active Steam users from Steam community member pages, then resolves canonical Steam IDs from profile pages. After that, it requests structured player data from Steam Web APIs.
+
+Collected entities include:
+
+- player summaries
+- owned games
+- friend lists
+- recently played games
+- game metadata
+
+### 2. Storage Layer
+
+Raw data is written as line-delimited JSON. This is a practical choice for a project like this because it is:
+
+- append-friendly,
+- easy to inspect manually,
+- compatible with Spark JSON readers, and
+- simple to move through notebook-based ETL pipelines.
+
+### 3. Processing and Modeling Layer
+
+The Spark notebook loads the JSON data into DataFrames, explodes nested structures, joins users with games, and constructs user-item implicit feedback triples in the form:
+
+```text
+(user_idx, appid, playtime_forever)
+```
+
+Two recommendation strategies are then produced:
+
+- **Popularity-based ranking**
+- **ALS-based collaborative filtering**
+
+### 4. Serving Layer
+
+Recommendation outputs are written into relational tables and served through Flask routes:
+
+- `/` for global recommendations
+- `/<user_id>` for personalized recommendations
+
+This separation keeps training and serving loosely coupled, which is closer to how production recommender systems are often deployed.
+
+## Repository Structure
 
 ```text
 .
 ├── README.md
 ├── image/
 │   ├── architecture.png
-│   ├── games.png
 │   ├── cf.png
-│   ├── mf.png
-│   ├── popularGame.png
+│   ├── games.png
 │   ├── gameRecommendation1.png
 │   ├── gameRecommendation2.png
+│   ├── mf.png
+│   ├── popularGame.png
 │   └── steamMember.png
+├── recommendation_engine/
+│   ├── docker_commands.md
+│   └── pyspark_recommendation.ipynb
 ├── web_crawler/
-│   ├── web_crawler.py
+│   ├── README_steam_API.md
 │   ├── game_detail.py
 │   ├── steam_crawler.ipynb
-│   ├── README_steam_API.md
-│   └── sample_data/
-├── recommendation_engine/
-│   ├── pyspark_recommendation.ipynb
-│   └── docker_commands.md
+│   ├── sample_data/
+│   │   ├── game_detail.json
+│   │   ├── user_friend_list_sample.json
+│   │   ├── user_idx_sample.json
+│   │   ├── user_owned_games_sample.json
+│   │   ├── user_recently_played_games_sample.json
+│   │   └── user_summary_sample.json
+│   └── web_crawler.py
 └── web_ui/
     ├── app.py
     ├── flaskapp.wsgi
-    ├── templates/
-    └── static/
+    ├── static/
+    └── templates/
 ```
 
-## End-to-End Data Pipeline
+## Data Pipeline
 
-### 1. User discovery
+### Stage 1: User Discovery
 
-- Source: Steam members pages like `https://steamcommunity.com/games/steam/members?p=<page>`
-- Logic: filter users with `online` or `in-game` class markers
-- Output: `user_idx_sample.json` where each long Steam ID gets a compact integer index
+The crawler reads Steam community member pages such as:
 
-Why index users:
+```text
+https://steamcommunity.com/games/steam/members?p=<page_number>
+```
 
-- Steam IDs are large 64-bit values
-- Indexing improves downstream algorithm compatibility and makes joins cheaper
+It extracts users marked as `online` or `in-game`, then follows their profile links and parses the embedded Steam ID. This is necessary because Steam does not provide a single clean endpoint for broad user discovery.
 
-### 2. Steam API ingestion
+### Stage 2: User Data Ingestion
 
-Collected entities:
+For each discovered Steam user, the crawler collects:
 
-- Player summaries
-- Owned games
-- Friend lists
-- Recently played games
-- Game metadata (appid, name, images, descriptions, tags, etc.)
+- summary profile information,
+- owned game library,
+- friend network,
+- recently played titles.
 
-Primary endpoints used:
+The primary API families used are:
 
 - `ISteamUser/GetPlayerSummaries`
 - `IPlayerService/GetOwnedGames`
@@ -113,138 +184,285 @@ Primary endpoints used:
 - `ISteamApps/GetAppList`
 - `store.steampowered.com/api/appdetails`
 
-### 3. Spark transformation
+### Stage 3: Game Metadata Ingestion
 
-Core operations in `pyspark_recommendation.ipynb`:
+`game_detail.py` first retrieves the Steam app catalog and then fetches app details from the Steam Store API. In the sample workflow included in this repository, it writes a subset of game details for downstream enrichment.
 
-- Parse JSON into DataFrames
-- Drop corrupt rows (`_corrupt_record`)
-- Explode nested arrays (`games`, `friends`)
-- Join on `user_idx` and `steam_appid`
-- Build training tuples: `(user_idx, appid, playtime_forever)`
+### Stage 4: Data Transformation
 
-### 4. Recommendation generation
+The Spark notebook performs several essential preprocessing steps:
 
-Two recommenders are produced:
+- loading JSON into DataFrames,
+- removing corrupt rows,
+- exploding nested arrays such as `games` and `friends`,
+- joining user and game entities,
+- converting large Steam IDs to compact integer user indices,
+- assembling model-ready interaction tuples.
 
-1. **Global popularity recommender**
-   - Sum `playtime_forever` for each game across users
-   - Return top-N globally most played titles
+### Stage 5: Recommendation Generation
 
-2. **Collaborative filtering recommender**
-   - Train implicit ALS on user-game-playtime tuples
-   - Generate top-N products per user index
-   - Map user index back to original Steam ID
-   - Enrich with game name/header image for UI
+The recommendation engine creates:
 
-### 5. Serving layer
+1. **Global recommendations** by aggregating total `playtime_forever` across users.
+2. **Personalized recommendations** using implicit-feedback ALS in Spark MLlib.
 
-Flask routes:
+### Stage 6: Persistence and Serving
 
-- `/` -> global recommendations (`global_recommend`)
-- `/<user_id>` -> personalized recommendations (`final_recommend`)
+Recommendation outputs are written to:
 
-Templates render each recommendation card with:
+- `global_recommend`
+- `final_recommend`
 
-- Game header image
-- Click-through link to Steam app page
+The Flask app reads those tables using SQLAlchemy and renders the results in HTML templates.
 
-## Data Contracts (Sample Files)
+## Recommendation Methodology
 
-Under `web_crawler/sample_data/`:
+### Popularity Baseline
 
-- `user_idx_sample.json`: `{ "user_idx": <int>, "user_id": "<steamid>" }`
-- `user_summary_sample.json`: user profile snapshots
-- `user_owned_games_sample.json`: full owned library + playtime
-- `user_friend_list_sample.json`: friend graph adjacency list
-- `user_recently_played_games_sample.json`: recent play activity
-- `game_detail.json`: Steam app metadata objects
+The baseline recommender ranks games by total accumulated playtime across the dataset. This is useful because it:
 
-These files are line-delimited JSON and intended for pipeline prototyping and notebook demos.
+- provides a fast sanity check,
+- establishes a strong non-personalized baseline,
+- gives coverage even when user-specific data is sparse.
 
-## Local Development Setup
+This method answers the question:
+
+> What games are broadly engaging across the observed player population?
+
+### Collaborative Filtering with ALS
+
+The personalized recommender uses Spark's implicit-feedback ALS implementation:
+
+```python
+als_model = ALS.trainImplicit(training_rdd, 10)
+```
+
+The model factorizes the user-item interaction space into low-dimensional latent vectors. Instead of requiring explicit ratings, it uses behavioral intensity derived from playtime. This is a natural fit for Steam, where users rarely submit structured ratings at the same scale they generate play history.
+
+Conceptually:
+
+```mermaid
+flowchart TD
+    A["User-game playtime matrix"] --> B["Matrix factorization with ALS"]
+    B --> C["Latent user factors"]
+    B --> D["Latent game factors"]
+    C --> E["Predicted affinity scores"]
+    D --> E
+    E --> F["Top-N personalized recommendations"]
+```
+
+### Why Implicit Feedback
+
+The project uses implicit signals because they are abundant, behaviorally grounded, and realistic for large-scale systems. Playtime is not a perfect proxy for satisfaction, but it is often a stronger signal than binary ownership.
+
+## Sample Data Snapshot
+
+The repository includes sample data extracted from the crawler workflow:
+
+- `163` indexed users
+- `163` player summary records
+- `163` owned-game records
+- `163` friend-list records
+- `163` recently-played records
+- `7` sample game detail records
+
+These files are located under `web_crawler/sample_data/` and serve as lightweight artifacts for demonstrating the pipeline without requiring a fresh crawl.
+
+## Key Implementation Details
+
+### Crawler
+
+The crawler is implemented in legacy Python style and uses:
+
+- `requests` for HTTP requests,
+- `BeautifulSoup` for HTML parsing,
+- `urllib` for profile retrieval,
+- `json` for structured output.
+
+It discovers users from Steam community pages, resolves a Steam ID from profile content, and serializes multiple API responses to JSON line files.
+
+### Recommendation Engine
+
+The notebook uses:
+
+- `SparkContext`
+- `SparkSession`
+- `HiveContext`
+- `pyspark.mllib.recommendation.ALS`
+
+The design is notebook-centric, which makes the system easy to explain and iterate on for experimentation, while still showing the main ideas used in production recommendation pipelines.
+
+### Web Application
+
+The Flask app maps directly onto the persisted recommendation tables:
+
+- `global_recommend` for global ranking output
+- `final_recommend` for personalized output
+
+The UI renders game cards using Steam header images and links each result back to the Steam app page.
+
+## Database Schema
+
+The web application expects two logical tables:
+
+### `global_recommend`
+
+| Column | Purpose |
+|---|---|
+| `rank` | ordering score or popularity ordering |
+| `name` | game title |
+| `header_image` | Steam-hosted header image |
+| `steam_appid` | unique Steam application id |
+
+### `final_recommend`
+
+| Column | Purpose |
+|---|---|
+| `user_id` | original Steam user id |
+| `rank` | recommendation order for a user |
+| `name` | recommended game title |
+| `header_image` | Steam-hosted header image |
+| `steam_appid` | recommended game id |
+
+## Results and Evidence
+
+This repository includes several concrete outputs that demonstrate the pipeline is functioning end to end.
+
+### Global recommendation output
+
+The Spark notebook shows globally popular titles ranked by total observed playtime. Example output includes:
+
+- `Counter-Strike: Global Offensive`
+- `Garry's Mod`
+
+The notebook output also shows large aggregate playtime values, indicating that the popularity baseline is being computed over real interaction intensity rather than binary counts alone.
+
+### Personalized recommendation output
+
+The ALS recommender generates ranked per-user recommendations. Sample notebook output includes personalized results such as:
+
+- `Team Fortress 2`
+- `PLAYERUNKNOWN'S BATTLEGROUNDS`
+- `Dota 2`
+
+This demonstrates that the system is not merely replaying one global list for every user, but producing user-linked recommendation rows.
+
+### User Interface artifacts
+
+The repository includes screenshots and architecture imagery that help validate the project as a working system rather than only a notebook:
+
+- ![Steam member discovery](image/steamMember.png)
+- ![Popularity recommendation](image/popularGame.png)
+- ![Personalized recommendation 1](image/gameRecommendation1.png)
+- ![Personalized recommendation 2](image/gameRecommendation2.png)
+- ![Collaborative filtering diagram](image/cf.png)
+- ![Matrix factorization diagram](image/mf.png)
+
+## Technical Strengths
+
+This project is especially strong as a systems portfolio piece because it demonstrates:
+
+- end-to-end ownership across data ingestion, modeling, persistence, and UI,
+- practical use of implicit-feedback recommendation methods,
+- integration between offline ML workflows and online serving,
+- comfort with semi-structured data and ETL design,
+- application of distributed data processing with Spark.
+
+## Limitations
+
+This repository is a strong prototype, but it also has clear limitations that are useful to acknowledge honestly:
+
+1. The crawler is written in legacy Python 2 style.
+2. Sample data size is limited and does not represent production-scale Steam traffic.
+3. The project does not currently include offline ranking metrics such as Precision@K, Recall@K, MAP@K, or NDCG@K.
+4. Cold-start handling for new users and new games is limited.
+5. Social graph data is collected but not yet fully integrated into a ranking model.
+6. The notebook pipeline would need orchestration, validation, and packaging before production deployment.
+
+## Future Improvements
+
+If this system were extended further, the next high-value improvements would be:
+
+1. Port the crawler and notebooks fully to Python 3.
+2. Add reproducible ETL jobs outside the notebook.
+3. Evaluate recommendation quality with ranking metrics.
+4. Blend collaborative filtering with content and social features.
+5. Add a true API layer for recommendation serving.
+6. Containerize the entire stack for easier local deployment.
+7. Introduce scheduled retraining and data freshness checks.
+8. Expand the UI with user search, fallbacks, and error handling for missing recommendation rows.
+
+## How To Run
 
 ### Prerequisites
 
-- Python 3.x for web UI (`web_ui/app.py`)
-- Python 2.7 compatibility for legacy crawler scripts (`web_crawler/*.py`)
-- Java + Spark (for recommendation notebook)
-- Optional: MySQL/MariaDB instance for UI-backed results
+- Python 3 for the Flask app
+- Python 2.7 compatibility for the legacy crawler scripts
+- Java and Spark for the notebook pipeline
+- optional MySQL or MariaDB for database-backed serving
 
-### 1) Configure environment
+### Environment Variables
 
 ```bash
 export STEAM_API_KEY="your_steam_api_key"
 export STEAM_RECOMMENDATION_DB_URI="mysql://user:password@host:3306/steam_recommendation"
 ```
 
-If `STEAM_RECOMMENDATION_DB_URI` is not set, the Flask app defaults to local SQLite:
+If `STEAM_RECOMMENDATION_DB_URI` is not set, the app falls back to:
 
-`sqlite:///steam_recommendation.db`
+```text
+sqlite:///steam_recommendation.db
+```
 
-### 2) Run crawler scripts (legacy Python 2 style)
+### Run the Crawler
 
 ```bash
 python web_crawler/web_crawler.py
 python web_crawler/game_detail.py
 ```
 
-### 3) Run notebook pipeline
+### Run the Recommendation Pipeline
 
 Open and execute:
 
-- `recommendation_engine/pyspark_recommendation.ipynb`
+```text
+recommendation_engine/pyspark_recommendation.ipynb
+```
 
-Key outputs:
+The notebook generates intermediate recommendation artifacts and final recommendation tables for serving.
 
-- Intermediate recommendation JSON
-- Final recommendation dataset for DB ingestion
-
-### 4) Run web UI
+### Run the Web Application
 
 ```bash
 cd web_ui
 python app.py
 ```
 
-Open:
+Then open:
 
-- `http://127.0.0.1:5000/` for global recommendations
-- `http://127.0.0.1:5000/<steam_user_id>` for personalized recommendations
+- `http://127.0.0.1:5000/`
+- `http://127.0.0.1:5000/<steam_user_id>`
 
-## Deployment Pattern (Documented)
+## Deployment Pattern
 
-The project docs and notebook demonstrate a classic split deployment:
+The notebook documents a deployment pattern built around:
 
-1. Offline compute in Spark for training/inference
-2. MySQL on AWS RDS for persisted recommendation tables
-3. Flask app on AWS EC2 behind WSGI for serving
+- Spark for offline computation,
+- MySQL on AWS RDS for persisted recommendation tables,
+- Flask served through WSGI on EC2.
 
-This pattern is useful because retraining and serving can scale independently.
+That design is useful because model generation and recommendation serving can scale independently.
 
-## Limitations and Engineering Notes
+## Portfolio Positioning
 
-- Crawler scripts are legacy Python 2 style (`print` statements, `xrange`)
-- Steam endpoints and HTML structure may change over time
-- API rate limits and private profiles reduce data completeness
-- ALS quality depends heavily on interaction sparsity and data freshness
-- Notebooks include prototype-style code and should be productionized for scheduled jobs
+For hiring managers, this project demonstrates the ability to:
 
-## Security and Configuration Notes
-
-- API keys and database credentials should be environment variables
-- Do not hardcode secrets in source files
-- Rotate any previously exposed credentials before production use
-
-## Recommended Improvements
-
-1. Port crawler and notebooks fully to Python 3
-2. Add unit tests for parsing and data contracts
-3. Add model evaluation metrics (MAP@K, NDCG@K, Recall@K)
-4. Add ETL orchestration (Airflow or cron + idempotent jobs)
-5. Add API layer (JSON endpoints) for frontend/consumer apps
-6. Add containerized local stack (`docker-compose`) for DB + app + Spark
+- design an applied machine learning system from first principles,
+- work across data engineering and application engineering boundaries,
+- translate model outputs into product-facing experiences,
+- explain architectural choices clearly,
+- make tradeoffs explicit between prototype speed and production readiness.
 
 ## License
 
-No license file is currently included in this repository. Add one before public reuse/distribution.
+No license file is currently included in this repository. Add one before public redistribution or external reuse.
