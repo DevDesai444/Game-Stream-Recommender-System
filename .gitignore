@@ -38,6 +38,7 @@ env/
 
 # Data, models, artifacts
 data/raw/
+!data/raw/.gitkeep
 data/bronze/
 data/silver/
 data/gold/
