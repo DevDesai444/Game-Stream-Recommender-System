@@ -13,3 +13,4 @@ superseded by a new file that links back to the original.
 | [0004](0004-pgvector-not-separate-vector-db.md) | pgvector inside Postgres over a separate vector DB | Accepted |
 | [0005](0005-cold-start-cascade-not-404.md) | Personal → cohort → global cascade over 404 on missing users | Accepted |
 | [0006](0006-laptop-runnable-benchmark-path.md) | Laptop-runnable benchmark path alongside the Spark path | Accepted |
+| [0007](0007-ucsd-dataset-and-two-tower.md) | UCSD Steam dataset and a real two-tower NCF | Accepted |

@@ -65,8 +65,7 @@ def parse_args() -> argparse.Namespace:
 
 def _truth_map(val_df) -> dict[int, list[int]]:
     return {
-        int(u): list(int(g) for g in group["game_idx"])
-        for u, group in val_df.groupby("user_idx")
+        int(u): list(int(g) for g in group["game_idx"]) for u, group in val_df.groupby("user_idx")
     }
 
 
@@ -130,9 +129,7 @@ def main() -> int:
     )
 
     # 3. ALS
-    print(
-        f"training: implicit ALS (factors={args.als_factors}, iters={args.als_iters})"
-    )
+    print(f"training: implicit ALS (factors={args.als_factors}, iters={args.als_iters})")
     t0 = time.time()
     als_model = train_als_inmem(
         train_df,
@@ -260,9 +257,7 @@ def main() -> int:
         "timings_seconds": timings,
         "metrics": {name: result.as_dict() for name, result in results.items()},
         "lift": {
-            "hybrid_vs_als_val": round(
-                relative_lift(results["hybrid"], results["als"]), 4
-            ),
+            "hybrid_vs_als_val": round(relative_lift(results["hybrid"], results["als"]), 4),
             "hybrid_vs_als_test": round(
                 relative_lift(results["hybrid_test"], results["als_test"]), 4
             ),

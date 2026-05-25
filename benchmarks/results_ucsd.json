@@ -1,0 +1,131 @@
+{
+  "config": {
+    "alpha": 20.0,
+    "als_factors": 32,
+    "als_iters": 8,
+    "candidates": 150,
+    "k": 10,
+    "kmeans_k": 12,
+    "max_users": 4000,
+    "reg": 0.05,
+    "two_tower": {
+      "embedding_dim": 24,
+      "epochs": 3,
+      "n_genres": 21,
+      "n_tags": 200,
+      "output_dim": 24,
+      "tower_hidden": [
+        128,
+        64
+      ]
+    }
+  },
+  "dataset": {
+    "n_games": 7208,
+    "n_interactions": 442170,
+    "n_reviews": 4913,
+    "n_users": 3946,
+    "name": "UCSD Steam (Australian users)",
+    "raw_files": [
+      "steam_games.json.gz",
+      "australian_users_items.json.gz",
+      "australian_user_reviews.json.gz"
+    ],
+    "test_rows": 44243,
+    "train_rows": 353684,
+    "val_rows": 44243
+  },
+  "lift": {
+    "hybrid_vs_als_test": 1.4271,
+    "hybrid_vs_als_val": 1.3936,
+    "hybrid_vs_popularity_val": 0.7967,
+    "two_tower_vs_als_val": -0.1294
+  },
+  "metrics": {
+    "als": {
+      "coverage@k": 0.197142,
+      "diversity@k": 0.409376,
+      "hit_rate@k": 0.535986,
+      "k": 10,
+      "map@k": 0.065583,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.125693,
+      "novelty@k": 10.020657,
+      "recall@k": 0.145304
+    },
+    "als_test": {
+      "coverage@k": 0.197142,
+      "diversity@k": 0.409376,
+      "hit_rate@k": 0.50963,
+      "k": 10,
+      "map@k": 0.0695,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.127968,
+      "novelty@k": 10.020657,
+      "recall@k": 0.146065
+    },
+    "cooccurrence": {
+      "coverage@k": 0.009156,
+      "diversity@k": 0.0,
+      "hit_rate@k": 0.47998,
+      "k": 10,
+      "map@k": 0.042363,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.095628,
+      "novelty@k": 8.16228,
+      "recall@k": 0.092755
+    },
+    "hybrid": {
+      "coverage@k": 0.08005,
+      "diversity@k": 0.122385,
+      "hit_rate@k": 0.878865,
+      "k": 10,
+      "map@k": 0.174241,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.300864,
+      "novelty@k": 8.921681,
+      "recall@k": 0.290968
+    },
+    "hybrid_test": {
+      "coverage@k": 0.08005,
+      "diversity@k": 0.122385,
+      "hit_rate@k": 0.882666,
+      "k": 10,
+      "map@k": 0.178247,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.310588,
+      "novelty@k": 8.921681,
+      "recall@k": 0.313288
+    },
+    "popularity": {
+      "coverage@k": 0.004994,
+      "diversity@k": 0.0,
+      "hit_rate@k": 0.647238,
+      "k": 10,
+      "map@k": 0.086295,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.167456,
+      "novelty@k": 8.310646,
+      "recall@k": 0.142338
+    },
+    "two_tower": {
+      "coverage@k": 0.028579,
+      "diversity@k": 0.036419,
+      "hit_rate@k": 0.49924,
+      "k": 10,
+      "map@k": 0.052057,
+      "n_users_scored": 3946,
+      "ndcg@k": 0.109424,
+      "novelty@k": 8.304767,
+      "recall@k": 0.102224
+    }
+  },
+  "timings_seconds": {
+    "als": 2.51,
+    "cooccurrence": 8.17,
+    "hybrid": 103.48,
+    "popularity": 0.24,
+    "two_tower": 37.0
+  },
+  "wall_clock_seconds": 181.15
+}

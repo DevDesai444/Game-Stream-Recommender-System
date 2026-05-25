@@ -266,9 +266,7 @@ def main() -> int:
     write_stub_app(stub_module)
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = "src" + (
-        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
-    )
+    env["PYTHONPATH"] = "src" + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     proc = subprocess.Popen(
         [
             sys.executable,
