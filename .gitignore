@@ -39,6 +39,9 @@ env/
 # Data, models, artifacts
 data/raw/
 !data/raw/.gitkeep
+
+# Generated load-test stub module
+scripts/_loadtest_stub_app.py
 data/bronze/
 data/silver/
 data/gold/

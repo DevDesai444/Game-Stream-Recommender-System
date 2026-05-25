@@ -6,3 +6,4 @@ pytest-mock>=3.14.0
 ruff>=0.4.4
 black>=24.4.0
 mypy>=1.10.0
+locust>=2.27.0

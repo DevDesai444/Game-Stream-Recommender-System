@@ -1,0 +1,60 @@
+{
+  "concurrency": 50,
+  "overall": {
+    "count": 2000.0,
+    "max_ms": 550.877,
+    "mean_ms": 57.898,
+    "p50_ms": 30.17,
+    "p90_ms": 133.92,
+    "p95_ms": 196.585,
+    "p99_ms": 345.31
+  },
+  "per_route": {
+    "/global": {
+      "count": 153.0,
+      "max_ms": 483.246,
+      "mean_ms": 99.083,
+      "p50_ms": 69.824,
+      "p90_ms": 225.235,
+      "p95_ms": 272.179,
+      "p99_ms": 463.529
+    },
+    "/health": {
+      "count": 153.0,
+      "max_ms": 262.735,
+      "mean_ms": 70.641,
+      "p50_ms": 57.167,
+      "p90_ms": 133.547,
+      "p95_ms": 176.343,
+      "p99_ms": 251.865
+    },
+    "/recommendations/{user_id}": {
+      "count": 1233.0,
+      "max_ms": 454.781,
+      "mean_ms": 38.462,
+      "p50_ms": 27.298,
+      "p90_ms": 50.151,
+      "p95_ms": 105.18,
+      "p99_ms": 233.021
+    },
+    "/similar/{appid}": {
+      "count": 461.0,
+      "max_ms": 550.877,
+      "mean_ms": 91.985,
+      "p50_ms": 62.787,
+      "p90_ms": 207.271,
+      "p95_ms": 264.383,
+      "p99_ms": 400.438
+    }
+  },
+  "served_from": {
+    "cache": 733,
+    "n/a": 767,
+    "personal": 500
+  },
+  "status_codes": {
+    "200": 2000
+  },
+  "total_requests": 2000,
+  "user_pool": 500
+}

@@ -38,14 +38,20 @@ log = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # pragma: no cover - bootstrap only
     configure_logging()
-    store = RecommendationStore()
-    try:
-        init_schema(store._engine)
-    except Exception as exc:  # noqa: BLE001 - logged for visibility
-        log.warning("api.schema_init_failed", error=str(exc))
-    app.state.store = store
-    app.state.cache = RecommendationCache()
-    app.state.metrics = Metrics.build()
+    # Skip building real store/cache if a wrapper has already injected
+    # stubs (load-test scripts do this so we measure FastAPI overhead
+    # in isolation from Postgres + Redis).
+    if not getattr(app.state, "store", None):
+        store = RecommendationStore()
+        try:
+            init_schema(store._engine)
+        except Exception as exc:  # noqa: BLE001 - logged for visibility
+            log.warning("api.schema_init_failed", error=str(exc))
+        app.state.store = store
+    if not getattr(app.state, "cache", None):
+        app.state.cache = RecommendationCache()
+    if not getattr(app.state, "metrics", None):
+        app.state.metrics = Metrics.build()
     yield
 
 
