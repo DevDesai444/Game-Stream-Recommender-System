@@ -1,4 +1,4 @@
-# ADR 0007 — UCSD Steam dataset and a real two-tower NCF
+# ADR 0007 — UCSD Steam dataset and a content-aware two-tower NCF
 
 **Status:** Accepted
 
@@ -21,7 +21,7 @@ content-aware. With Steam-200k that promise was empty.
 Switch the canonical benchmark dataset to **Julian McAuley's UCSD
 Steam dataset** (the version with `steam_games.json.gz`,
 `australian_users_items.json.gz`, and `australian_user_reviews.json.gz`)
-and build a real two-tower NeuMF that consumes the content metadata
+and build a content-aware two-tower NeuMF that consumes the metadata
 the new dataset carries:
 
 * **Item tower**  ::  `[item_embedding ⊕ multi_hot_genres ⊕ multi_hot_tags ⊕ dense_features]`

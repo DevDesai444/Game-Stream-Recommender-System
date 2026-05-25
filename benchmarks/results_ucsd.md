@@ -1,4 +1,4 @@
-# Benchmark Results — UCSD Steam (real two-tower NCF)
+# Benchmark Results — UCSD Steam (content-aware two-tower NCF)
 
 Dataset: Julian McAuley's UCSD Steam release. Three source files
 (steam_games metadata, australian_users_items, australian_user_reviews)

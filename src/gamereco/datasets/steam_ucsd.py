@@ -4,7 +4,7 @@ The UCSD release carries genuine content metadata on both sides of
 the (user, item) graph — genres, tags, specs, price, release date,
 developer/publisher on the item side; owned-game count, total
 playtime, review count, average review helpfulness on the user side.
-This is what makes a real two-tower model possible (steam-200k only
+This is what makes the content-aware two-tower model possible (steam-200k only
 had user_id, game_name, behavior, value — embedding-only territory).
 
 Three source files, all Python ``repr``-style (single-quoted,
