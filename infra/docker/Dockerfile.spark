@@ -1,0 +1,21 @@
+FROM apache/spark:3.5.1-python3
+
+USER root
+WORKDIR /opt/gamereco
+
+ENV PYTHONUNBUFFERED=1 \
+    PYSPARK_PYTHON=python3 \
+    PYSPARK_DRIVER_PYTHON=python3
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml requirements.txt ./
+RUN pip install --upgrade pip \
+    && pip install -r requirements.txt
+
+COPY src/ src/
+RUN pip install -e .
+
+USER spark

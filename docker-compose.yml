@@ -1,0 +1,160 @@
+version: "3.9"
+
+# Seven-service stack:
+#   1. postgres        (pgvector enabled, recs + game metadata)
+#   2. redis           (latency cache + cache warmer target)
+#   3. mlflow          (experiment tracking + model registry)
+#   4. minio           (S3-compatible artifact backend for Delta + MLflow)
+#   5. spark           (Spark 3.5 + Delta Lake ETL / training runner)
+#   6. airflow         (DAG orchestrator wired to the gamereco CLI)
+#   7. api             (FastAPI recommendation service)
+
+x-common-env: &common-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: gamereco
+  POSTGRES_USER: gamereco
+  POSTGRES_PASSWORD: gamereco
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  MLFLOW_REGISTRY_URI: http://mlflow:5000
+  MLFLOW_EXPERIMENT: gamereco
+  DELTA_ROOT: /opt/gamereco/data/delta
+  STEAM_API_KEY: ${STEAM_API_KEY:-replace-me}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: gamereco-postgres
+    environment:
+      POSTGRES_DB: gamereco
+      POSTGRES_USER: gamereco
+      POSTGRES_PASSWORD: gamereco
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamereco -d gamereco"]
+      interval: 10s
+      retries: 6
+
+  redis:
+    image: redis:7-alpine
+    container_name: gamereco-redis
+    ports: ["6379:6379"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 6
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    container_name: gamereco-minio
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniopass
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    container_name: gamereco-mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://gamereco:gamereco@postgres:5432/gamereco
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://gamereco-artifacts/
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: miniopass
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - postgresql+psycopg2://gamereco:gamereco@postgres:5432/gamereco
+      - --default-artifact-root
+      - s3://gamereco-artifacts/
+    ports: ["5000:5000"]
+
+  spark:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.spark
+    image: gamereco/spark:0.2.0
+    container_name: gamereco-spark
+    environment:
+      <<: *common-env
+      SPARK_MASTER: local[*]
+      SPARK_DRIVER_MEMORY: 4g
+      SPARK_EXECUTOR_MEMORY: 4g
+    volumes:
+      - ./data:/opt/gamereco/data
+      - ./airflow/dags:/opt/airflow/dags
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+
+  airflow:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.airflow
+    image: gamereco/airflow:0.2.0
+    container_name: gamereco-airflow
+    environment:
+      <<: *common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://gamereco:gamereco@postgres:5432/gamereco
+    command:
+      - bash
+      - -c
+      - "airflow db migrate && airflow users create -u admin -p admin -f admin -l admin -r Admin -e admin@example.com || true && airflow webserver"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["8080:8080"]
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data:/opt/gamereco/data
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    image: gamereco/api:0.2.0
+    container_name: gamereco-api
+    environment:
+      <<: *common-env
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      REDIS_TTL_SECONDS: "900"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsSL", "http://localhost:8000/health"]
+      interval: 15s
+      retries: 6
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
