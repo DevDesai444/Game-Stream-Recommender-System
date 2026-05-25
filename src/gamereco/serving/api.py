@@ -17,7 +17,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,11 @@ from gamereco.common.logging import configure_logging, get_logger
 from gamereco.common.schemas import RecommendationItem, RecommendationResponse
 from gamereco.serving.cache import RecommendationCache
 from gamereco.serving.coldstart import resolve as resolve_coldstart
+from gamereco.serving.observability import (
+    Metrics,
+    RequestIdMiddleware,
+    StructuredAccessLogMiddleware,
+)
 from gamereco.serving.store import RecommendationStore, init_schema
 
 log = get_logger(__name__)
@@ -40,6 +45,7 @@ async def lifespan(app: FastAPI):  # pragma: no cover - bootstrap only
         log.warning("api.schema_init_failed", error=str(exc))
     app.state.store = store
     app.state.cache = RecommendationCache()
+    app.state.metrics = Metrics.build()
     yield
 
 
@@ -49,6 +55,15 @@ app = FastAPI(
     description="Hybrid ALS + NCF + KMeans + XGBoost recommendation service",
     lifespan=lifespan,
 )
+
+# Metrics holder used by the middleware before app.state.metrics exists
+# (the metrics registry must be process-singleton so /metrics keeps
+# accumulating across requests).
+_BOOT_METRICS = Metrics.build()
+app.state.metrics = _BOOT_METRICS
+
+app.add_middleware(StructuredAccessLogMiddleware, metrics=_BOOT_METRICS)
+app.add_middleware(RequestIdMiddleware)
 
 
 def get_store() -> RecommendationStore:
@@ -64,9 +79,17 @@ async def health(cache: Annotated[RecommendationCache, Depends(get_cache)]) -> d
     return {"status": "ok", "redis": "up" if cache.ping() else "down"}
 
 
+@app.get("/metrics")
+async def metrics_endpoint() -> Response:
+    """Prometheus scrape endpoint."""
+    body, content_type = app.state.metrics.render()  # type: ignore[attr-defined]
+    return Response(content=body, media_type=content_type)
+
+
 @app.get("/recommendations/{user_id}", response_model=RecommendationResponse)
 async def recommendations(
     user_id: str,
+    response: Response,
     store: Annotated[RecommendationStore, Depends(get_store)],
     cache: Annotated[RecommendationCache, Depends(get_cache)],
     limit: int = Query(10, ge=1, le=50),
@@ -82,6 +105,7 @@ async def recommendations(
     cached = cache.get(user_id)
     if cached is not None:
         latency = (time.perf_counter() - started) * 1000
+        response.headers["X-Served-From"] = "cache"
         return RecommendationResponse(
             user_id=user_id,
             served_from="cache",
@@ -99,6 +123,7 @@ async def recommendations(
         cache.set(user_id, resolved.items)
 
     latency = (time.perf_counter() - started) * 1000
+    response.headers["X-Served-From"] = resolved.served_from
     return RecommendationResponse(
         user_id=user_id,
         served_from=resolved.served_from,
