@@ -29,3 +29,18 @@ CREATE TABLE IF NOT EXISTS user_recommendations (
 );
 
 CREATE INDEX IF NOT EXISTS user_recommendations_user_idx ON user_recommendations (user_id);
+
+CREATE TABLE IF NOT EXISTS user_cohorts (
+    user_id    VARCHAR(32) PRIMARY KEY,
+    cohort_id  INTEGER     NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS user_cohorts_cohort_idx ON user_cohorts (cohort_id);
+
+CREATE TABLE IF NOT EXISTS cohort_top (
+    cohort_id    INTEGER NOT NULL,
+    rank         INTEGER NOT NULL,
+    steam_appid  BIGINT  NOT NULL,
+    score        DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (cohort_id, rank)
+);

@@ -61,6 +61,24 @@ user_recommendations_table = Table(
 )
 
 
+user_cohorts_table = Table(
+    "user_cohorts",
+    metadata,
+    Column("user_id", String(32), primary_key=True),
+    Column("cohort_id", Integer, nullable=False, index=True),
+)
+
+
+cohort_top_table = Table(
+    "cohort_top",
+    metadata,
+    Column("cohort_id", Integer, primary_key=True),
+    Column("rank", Integer, primary_key=True),
+    Column("steam_appid", BigInteger, nullable=False),
+    Column("score", Float, nullable=False),
+)
+
+
 def build_engine(echo: bool = False) -> Engine:
     cfg = postgres_settings()
     return create_engine(cfg.dsn, future=True, echo=echo, pool_pre_ping=True)

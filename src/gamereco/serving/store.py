@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 from gamereco.common.schemas import RecommendationItem
 from gamereco.serving.db import (
     build_engine,
+    cohort_top_table,
     game_embeddings_table,
     games_table,
+    user_cohorts_table,
     user_recommendations_table,
 )
 
@@ -69,6 +71,43 @@ class RecommendationStore:
         )
         with Session(self._engine) as session:
             rows = session.execute(query, {"appid": steam_appid, "limit": limit}).all()
+        return [
+            RecommendationItem(
+                steam_appid=int(r.steam_appid),
+                name=str(r.name),
+                header_image=r.header_image,
+                score=float(r.score),
+            )
+            for r in rows
+        ]
+
+    def user_cohort(self, user_id: str) -> int | None:
+        stmt = (
+            select(user_cohorts_table.c.cohort_id)
+            .where(user_cohorts_table.c.user_id == user_id)
+            .limit(1)
+        )
+        with Session(self._engine) as session:
+            row = session.execute(stmt).first()
+        return int(row.cohort_id) if row else None
+
+    def cohort_top(self, cohort_id: int, *, limit: int = 10) -> list[RecommendationItem]:
+        """Per-cohort top-K. Used as a cold-start fallback for users
+        whose history is too thin to support a personalised list."""
+        stmt = text(
+            """
+            SELECT c.steam_appid, c.score, g.name, g.header_image
+              FROM cohort_top c
+              JOIN games g ON g.steam_appid = c.steam_appid
+             WHERE c.cohort_id = :cohort_id
+             ORDER BY c.rank ASC
+             LIMIT :limit
+            """
+        )
+        with Session(self._engine) as session:
+            rows = session.execute(
+                stmt, {"cohort_id": cohort_id, "limit": limit}
+            ).all()
         return [
             RecommendationItem(
                 steam_appid=int(r.steam_appid),
