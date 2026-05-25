@@ -258,7 +258,7 @@ flowchart LR
     CHIT[X-Served-From: cohort]
     GHIT[X-Served-From: global_fallback]
     FIVEONE3[503<br/>backend not bootstrapped]
-    PROM[Prometheus<br/>requests_total{method,route,status}<br/>request_latency_seconds histogram<br/>recs_served_from_total counter]
+    PROM["Prometheus<br/>requests_total by method, route, status<br/>request_latency_seconds histogram<br/>recs_served_from_total counter"]
     LOG[Structured JSON access log<br/>method · path · status · duration_ms · served_from · request_id]
     RESP[200 + RecommendationResponse JSON]
 
