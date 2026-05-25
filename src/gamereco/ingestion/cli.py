@@ -62,9 +62,7 @@ def ingest_users(seed: Path) -> None:
     lake = LakePaths(root=Path(spark_settings().delta_root))
 
     async def _run() -> None:
-        client = SteamClient(
-            SteamClientConfig(api_key=cfg.api_key, concurrency=cfg.concurrency)
-        )
+        client = SteamClient(SteamClientConfig(api_key=cfg.api_key, concurrency=cfg.concurrency))
         async with client:
             pipeline = IngestionPipeline(client, lake)
             ids = [json.loads(line)["steamid"] for line in seed.read_text().splitlines() if line]

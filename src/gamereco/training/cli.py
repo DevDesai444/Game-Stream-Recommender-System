@@ -64,10 +64,16 @@ def train_ncf_cmd(epochs: int, batch_size: int, device: str) -> None:
     lake = LakePaths(root=Path(spark_settings().delta_root))
 
     train_pd = (
-        spark.read.format("delta").load(str(lake.gold_train)).select("user_idx", "game_idx").toPandas()
+        spark.read.format("delta")
+        .load(str(lake.gold_train))
+        .select("user_idx", "game_idx")
+        .toPandas()
     )
     val_pd = (
-        spark.read.format("delta").load(str(lake.gold_val)).select("user_idx", "game_idx").toPandas()
+        spark.read.format("delta")
+        .load(str(lake.gold_val))
+        .select("user_idx", "game_idx")
+        .toPandas()
     )
     num_users = int(max(train_pd["user_idx"].max(), val_pd["user_idx"].max()) + 1)
     num_items = int(max(train_pd["game_idx"].max(), val_pd["game_idx"].max()) + 1)
@@ -80,7 +86,9 @@ def train_ncf_cmd(epochs: int, batch_size: int, device: str) -> None:
     )
     grid = NCFGrid()
     with start_run("ncf-cv", tags={"model": "ncf"}):
-        log_params({"grid_size": grid.total_configs, "num_users": num_users, "num_items": num_items})
+        log_params(
+            {"grid_size": grid.total_configs, "num_users": num_users, "num_items": num_items}
+        )
         best_model, best_cfg, metrics, history = cross_validate_ncf(
             train_pd, val_pd, num_users, num_items, grid=grid, base=base
         )
@@ -113,9 +121,7 @@ def train_kmeans_cmd(k: int) -> None:
     click.echo({"cluster_entropy": entropy, "k": k})
 
 
-def _candidate_frame(
-    spark, lake: LakePaths, *, top_n_candidates: int
-) -> pd.DataFrame:
+def _candidate_frame(spark, lake: LakePaths, *, top_n_candidates: int) -> pd.DataFrame:
     """Stitch ALS top-N candidates with NCF scores, cohort features, and labels."""
     als_path = Path(lake.root) / "models" / "als"
     als_model = ALSModel.load(str(als_path))
@@ -150,22 +156,21 @@ def _candidate_frame(
         .groupBy("user_cluster", "game_idx")
         .agg(F.count("*").alias("cluster_popularity"))
     )
-    labels = (
-        val.select("user_idx", "game_idx")
-        .withColumn("label", F.lit(1))
-    )
+    labels = val.select("user_idx", "game_idx").withColumn("label", F.lit(1))
     enriched = (
         candidates.join(global_pop, on="game_idx", how="left")
         .join(user_pop, on="user_idx", how="left")
         .join(cluster_pop, on=["user_cluster", "game_idx"], how="left")
         .join(labels, on=["user_idx", "game_idx"], how="left")
-        .fillna({
-            "log_global_popularity": 0.0,
-            "log_playtime_user": 0.0,
-            "cluster_popularity": 0,
-            "label": 0,
-            "user_cluster": -1,
-        })
+        .fillna(
+            {
+                "log_global_popularity": 0.0,
+                "log_playtime_user": 0.0,
+                "cluster_popularity": 0,
+                "label": 0,
+                "user_cluster": -1,
+            }
+        )
     )
     return enriched.toPandas()
 
@@ -228,9 +233,7 @@ def _baseline_ndcg(val_df: pd.DataFrame) -> float:
 
     sorted_df = val_df.sort_values(["user_idx", "als_score"], ascending=[True, False])
     preds = sorted_df.groupby("user_idx")["game_idx"].apply(list).to_dict()
-    truth = (
-        val_df[val_df["label"] == 1].groupby("user_idx")["game_idx"].apply(list).to_dict()
-    )
+    truth = val_df[val_df["label"] == 1].groupby("user_idx")["game_idx"].apply(list).to_dict()
     return ndcg_at_k_numpy(preds, truth, k=10)
 
 

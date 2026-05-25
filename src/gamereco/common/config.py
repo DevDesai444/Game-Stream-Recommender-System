@@ -46,8 +46,7 @@ class PostgresSettings(BaseSettings):
     @property
     def dsn(self) -> str:
         return (
-            f"postgresql://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.database}"
+            f"postgresql://{self.user}:{self.password}" f"@{self.host}:{self.port}/{self.database}"
         )
 
     @property

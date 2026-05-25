@@ -21,7 +21,9 @@ def _bootstrap() -> None:
 
 
 @contextlib.contextmanager
-def start_run(run_name: str, *, nested: bool = False, tags: dict[str, str] | None = None) -> Iterator[Any]:
+def start_run(
+    run_name: str, *, nested: bool = False, tags: dict[str, str] | None = None
+) -> Iterator[Any]:
     _bootstrap()
     with mlflow.start_run(run_name=run_name, nested=nested, tags=tags or {}) as run:
         yield run

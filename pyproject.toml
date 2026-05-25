@@ -113,7 +113,19 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",  # line length is enforced by black, not ruff
+    # Intentional style choices below — relaxed for the whole repo:
+    "N806",  # uppercase math-notation locals (X, Y, YtY, A) match ALS/XGBoost paper conventions
+    "N812",  # `from pyspark.sql import functions as F` is the universal Spark idiom
+    "B008",  # dataclass(frozen=True) defaults in function signatures are idiomatic & safe here
+    "B007",  # unused loop counter variables (kept for readability in benchmark/training loops)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks and integration scripts get a bit more slack
+"scripts/*" = ["B008", "N806"]
+"tests/*" = ["N806", "B008", "B007"]
 
 [tool.black]
 line-length = 100

@@ -22,9 +22,7 @@ def _stub_client() -> MagicMock:
         return_value={"steamid": "1", "total_count": 1, "games": [{"appid": 10}]}
     )
     client.friend_list = AsyncMock(return_value={"steamid": "1", "friends": []})
-    client.app_details = AsyncMock(
-        return_value={"steam_appid": 10, "name": "X", "success": True}
-    )
+    client.app_details = AsyncMock(return_value={"steam_appid": 10, "name": "X", "success": True})
     return client
 
 

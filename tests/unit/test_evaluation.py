@@ -65,7 +65,9 @@ def test_novelty_higher_for_rare_items() -> None:
         item_popularity=popularity,
     )
     rare_novelty = -math.log2(1 / 151)
-    assert result.novelty == pytest.approx((rare_novelty + -math.log2(50 / 151) + -math.log2(100 / 151)) / 3, rel=1e-4)
+    assert result.novelty == pytest.approx(
+        (rare_novelty + -math.log2(50 / 151) + -math.log2(100 / 151)) / 3, rel=1e-4
+    )
 
 
 def test_novelty_handles_unseen_item_floor() -> None:
@@ -89,12 +91,8 @@ def test_diversity_drops_for_near_identical_embeddings() -> None:
             [-1.0, 0.0, 0.0],
         ]
     )
-    similar = evaluate(
-        {1: [0, 1]}, {1: [0]}, k=2, n_items=3, item_embeddings=embeddings
-    )
-    diverse = evaluate(
-        {1: [0, 2]}, {1: [0]}, k=2, n_items=3, item_embeddings=embeddings
-    )
+    similar = evaluate({1: [0, 1]}, {1: [0]}, k=2, n_items=3, item_embeddings=embeddings)
+    diverse = evaluate({1: [0, 2]}, {1: [0]}, k=2, n_items=3, item_embeddings=embeddings)
     assert diverse.diversity > similar.diversity
 
 
@@ -118,18 +116,54 @@ def test_map_decreases_when_hit_moves_down_the_list() -> None:
 
 
 def test_relative_lift_zero_baseline_returns_zero() -> None:
-    a = EvalResult(k=10, ndcg=0.5, recall=0, map_score=0, hit_rate=0,
-                   coverage=0, novelty=0, diversity=0, n_users_scored=1)
-    b = EvalResult(k=10, ndcg=0.0, recall=0, map_score=0, hit_rate=0,
-                   coverage=0, novelty=0, diversity=0, n_users_scored=1)
+    a = EvalResult(
+        k=10,
+        ndcg=0.5,
+        recall=0,
+        map_score=0,
+        hit_rate=0,
+        coverage=0,
+        novelty=0,
+        diversity=0,
+        n_users_scored=1,
+    )
+    b = EvalResult(
+        k=10,
+        ndcg=0.0,
+        recall=0,
+        map_score=0,
+        hit_rate=0,
+        coverage=0,
+        novelty=0,
+        diversity=0,
+        n_users_scored=1,
+    )
     assert relative_lift(a, b) == 0.0
 
 
 def test_relative_lift_positive() -> None:
-    a = EvalResult(k=10, ndcg=0.5, recall=0, map_score=0, hit_rate=0,
-                   coverage=0, novelty=0, diversity=0, n_users_scored=1)
-    b = EvalResult(k=10, ndcg=0.4, recall=0, map_score=0, hit_rate=0,
-                   coverage=0, novelty=0, diversity=0, n_users_scored=1)
+    a = EvalResult(
+        k=10,
+        ndcg=0.5,
+        recall=0,
+        map_score=0,
+        hit_rate=0,
+        coverage=0,
+        novelty=0,
+        diversity=0,
+        n_users_scored=1,
+    )
+    b = EvalResult(
+        k=10,
+        ndcg=0.4,
+        recall=0,
+        map_score=0,
+        hit_rate=0,
+        coverage=0,
+        novelty=0,
+        diversity=0,
+        n_users_scored=1,
+    )
     assert relative_lift(a, b) == pytest.approx(0.25)
 
 

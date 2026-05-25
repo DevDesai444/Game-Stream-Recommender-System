@@ -116,12 +116,7 @@ def train_xgb(
         .apply(list)
         .to_dict()
     )
-    truth = (
-        val_df[val_df["label"] == 1]
-        .groupby("user_idx")["game_idx"]
-        .apply(list)
-        .to_dict()
-    )
+    truth = val_df[val_df["label"] == 1].groupby("user_idx")["game_idx"].apply(list).to_dict()
     ndcg10 = ndcg_at_k_numpy(preds, truth, k=10)
     importance = booster.get_score(importance_type="gain")
     log.info("ensemble.trained", ndcg_at_10=ndcg10, importance=importance)

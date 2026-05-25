@@ -51,7 +51,7 @@ def ndcg_at_k_numpy(
     return float(np.mean(scores)) if scores else 0.0
 
 
-def collect_top_k(recommendations: "DataFrame", k: int = 10) -> dict[int, list[int]]:
+def collect_top_k(recommendations: DataFrame, k: int = 10) -> dict[int, list[int]]:
     """Collect (user_idx -> [game_idx, ...]) sorted by score desc."""
     from pyspark.sql import functions as F
 
@@ -64,7 +64,7 @@ def collect_top_k(recommendations: "DataFrame", k: int = 10) -> dict[int, list[i
     return out
 
 
-def ground_truth_from_holdout(holdout: "DataFrame") -> dict[int, list[int]]:
+def ground_truth_from_holdout(holdout: DataFrame) -> dict[int, list[int]]:
     rows = holdout.select("user_idx", "game_idx").collect()
     truth: dict[int, list[int]] = {}
     for row in rows:

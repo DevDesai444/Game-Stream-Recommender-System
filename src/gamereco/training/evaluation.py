@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-
 _ItemList = Sequence[int]
 
 
@@ -105,9 +104,7 @@ def _hit_for_user(predicted: _ItemList, truth: set[int], k: int) -> float | None
     return 1.0 if (top_k & truth) else 0.0
 
 
-def _coverage(
-    all_predictions: Mapping[int, _ItemList], n_items: int, k: int
-) -> float:
+def _coverage(all_predictions: Mapping[int, _ItemList], n_items: int, k: int) -> float:
     if n_items <= 0:
         return 0.0
     seen: set[int] = set()
@@ -147,9 +144,7 @@ def _diversity(
     """1 - mean pairwise cosine similarity inside each user's top-K."""
     if item_embeddings is None or item_embeddings.size == 0:
         return 0.0
-    normalised = item_embeddings / (
-        np.linalg.norm(item_embeddings, axis=1, keepdims=True) + 1e-12
-    )
+    normalised = item_embeddings / (np.linalg.norm(item_embeddings, axis=1, keepdims=True) + 1e-12)
     diversities: list[float] = []
     for items in all_predictions.values():
         top_k = [int(i) for i in list(items)[:k] if 0 <= int(i) < normalised.shape[0]]

@@ -65,15 +65,15 @@ class GameDetail(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     @classmethod
-    def from_steam_payload(cls, payload: dict[str, Any]) -> "GameDetail":
+    def from_steam_payload(cls, payload: dict[str, Any]) -> GameDetail:
         genres = [g["description"] for g in payload.get("genres", []) if "description" in g]
-        categories = [
-            c["description"] for c in payload.get("categories", []) if "description" in c
-        ]
-        release_date = payload.get("release_date", {}).get("date") if payload.get(
-            "release_date"
-        ) else None
-        metacritic = payload.get("metacritic", {}).get("score") if payload.get("metacritic") else None
+        categories = [c["description"] for c in payload.get("categories", []) if "description" in c]
+        release_date = (
+            payload.get("release_date", {}).get("date") if payload.get("release_date") else None
+        )
+        metacritic = (
+            payload.get("metacritic", {}).get("score") if payload.get("metacritic") else None
+        )
         return cls(
             steam_appid=int(payload["steam_appid"]),
             name=payload.get("name", ""),

@@ -92,13 +92,8 @@ def known_items_by_user(train_df: pd.DataFrame) -> dict[int, set[int]]:
 
 
 def item_popularity(train_df: pd.DataFrame) -> dict[int, float]:
-    return {
-        int(g): float(c)
-        for g, c in train_df.groupby("game_idx").size().items()
-    }
+    return {int(g): float(c) for g, c in train_df.groupby("game_idx").size().items()}
 
 
-def truncate_predictions(
-    predictions: dict[int, Iterable[int]], k: int
-) -> dict[int, list[int]]:
+def truncate_predictions(predictions: dict[int, Iterable[int]], k: int) -> dict[int, list[int]]:
     return {u: list(items)[:k] for u, items in predictions.items()}

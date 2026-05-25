@@ -50,7 +50,7 @@ class Metrics:
     served_from: Counter
 
     @classmethod
-    def build(cls) -> "Metrics":
+    def build(cls) -> Metrics:
         registry = CollectorRegistry()
         requests = Counter(
             "gamereco_requests_total",
@@ -63,7 +63,16 @@ class Metrics:
             "HTTP request latency in seconds",
             labelnames=("method", "route"),
             buckets=(
-                0.01, 0.025, 0.05, 0.1, 0.185, 0.25, 0.5, 1.0, 2.5, 5.0,
+                0.01,
+                0.025,
+                0.05,
+                0.1,
+                0.185,
+                0.25,
+                0.5,
+                1.0,
+                2.5,
+                5.0,
             ),
             registry=registry,
         )
@@ -108,9 +117,7 @@ class StructuredAccessLogMiddleware(BaseHTTPMiddleware):
             else request.url.path
         )
         served_from = response.headers.get("X-Served-From", "")
-        self._metrics.requests.labels(
-            request.method, route, str(response.status_code)
-        ).inc()
+        self._metrics.requests.labels(request.method, route, str(response.status_code)).inc()
         self._metrics.latency.labels(request.method, route).observe(duration)
         if served_from:
             self._metrics.served_from.labels(served_from).inc()

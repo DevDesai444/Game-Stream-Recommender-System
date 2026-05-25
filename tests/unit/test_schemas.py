@@ -81,9 +81,7 @@ def test_game_detail_from_payload_missing_optionals() -> None:
 
 
 def test_interaction_validates() -> None:
-    inter = Interaction(
-        user_idx=1, game_idx=2, playtime_minutes=10, event_ts=datetime.utcnow()
-    )
+    inter = Interaction(user_idx=1, game_idx=2, playtime_minutes=10, event_ts=datetime.utcnow())
     assert inter.confidence == pytest.approx(1.0)
 
 
@@ -99,8 +97,6 @@ def test_recommendation_item_round_trip() -> None:
 
 def test_recommendation_response_packs_items() -> None:
     item = RecommendationItem(steam_appid=1, name="x", header_image=None, score=1.0)
-    resp = RecommendationResponse(
-        user_id="u", served_from="cache", latency_ms=12.5, items=[item]
-    )
+    resp = RecommendationResponse(user_id="u", served_from="cache", latency_ms=12.5, items=[item])
     assert len(resp.items) == 1
     assert resp.served_from == "cache"

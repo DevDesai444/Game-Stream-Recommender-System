@@ -8,7 +8,6 @@ import pytest
 
 from gamereco.training.als_inmem import (
     ALSInMemConfig,
-    ALSInMemModel,
     train_als_inmem,
 )
 

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 
 import numpy as np
 from pyspark.ml.clustering import KMeans, KMeansModel
-from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.linalg import Vectors
 from pyspark.ml.recommendation import ALSModel
 from pyspark.sql import DataFrame, SparkSession
@@ -69,10 +68,7 @@ def silhouette_score_proxy(assignments: DataFrame) -> float:
     collapsed onto a single bucket.
     """
     counts = (
-        assignments.groupBy("user_cluster")
-        .count()
-        .toPandas()["count"]
-        .to_numpy(dtype=np.float64)
+        assignments.groupBy("user_cluster").count().toPandas()["count"].to_numpy(dtype=np.float64)
     )
     if counts.sum() == 0:
         return 0.0

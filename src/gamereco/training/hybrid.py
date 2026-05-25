@@ -121,9 +121,7 @@ def _global_pop(train_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _cluster_popularity(
-    train_df: pd.DataFrame, user_clusters: np.ndarray
-) -> pd.DataFrame:
+def _cluster_popularity(train_df: pd.DataFrame, user_clusters: np.ndarray) -> pd.DataFrame:
     annotated = train_df.assign(user_cluster=user_clusters[train_df["user_idx"]])
     return (
         annotated.groupby(["user_cluster", "game_idx"])
@@ -197,8 +195,6 @@ def _train_ncf_quick(
         # negligible (catalogue has ~4K items, avg user has ~20).
         neg_users = np.repeat(pos_users, negative_ratio)
         sampled = rng.integers(0, n_items, size=int(n_neg * 1.2))
-        # Build a mask: candidate is OK if not in user's positive set.
-        keep = np.ones(sampled.size, dtype=bool)
         # Lazy per-user rejection — only the first n_neg accepted.
         accepted_neg = np.empty(n_neg, dtype=np.int64)
         write = 0
@@ -254,13 +250,10 @@ def assemble_candidates(
     ncf_item_emb: np.ndarray | None,
 ) -> HybridCandidates:
     known = {
-        int(u): set(int(g) for g in group["game_idx"])
-        for u, group in train_df.groupby("user_idx")
+        int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
     user_indices = val_df["user_idx"].unique()
-    cand = _als_top_candidates(
-        als, user_indices, known=known, n_candidates=n_candidates
-    )
+    cand = _als_top_candidates(als, user_indices, known=known, n_candidates=n_candidates)
     cand["user_cluster"] = user_clusters[cand["user_idx"].to_numpy()]
     cand = cand.merge(_user_features(train_df), on="user_idx", how="left")
     cand = cand.merge(_global_pop(train_df), on="game_idx", how="left")
@@ -355,12 +348,9 @@ def hybrid_rerank(
 ) -> dict[int, list[int]]:
     """Score and re-rank ALS candidates with the XGBoost ranker."""
     known = {
-        int(u): set(int(g) for g in group["game_idx"])
-        for u, group in train_df.groupby("user_idx")
+        int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
-    cand = _als_top_candidates(
-        bundle.als, user_indices, known=known, n_candidates=n_candidates
-    )
+    cand = _als_top_candidates(bundle.als, user_indices, known=known, n_candidates=n_candidates)
     cand["user_cluster"] = bundle.user_clusters[cand["user_idx"].to_numpy()]
     cand = cand.merge(_user_features(train_df), on="user_idx", how="left")
     cand = cand.merge(_global_pop(train_df), on="game_idx", how="left")
@@ -392,8 +382,7 @@ def als_topk(
 ) -> dict[int, list[int]]:
     """Top-K predictions from a bare ALS model (no re-ranker)."""
     known = {
-        int(u): set(int(g) for g in group["game_idx"])
-        for u, group in train_df.groupby("user_idx")
+        int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
     out: dict[int, list[int]] = {}
     for user in user_indices:
@@ -412,8 +401,7 @@ def ncf_topk(
 ) -> dict[int, list[int]]:
     """Top-K predictions from raw NCF dot-product scores."""
     known = {
-        int(u): set(int(g) for g in group["game_idx"])
-        for u, group in train_df.groupby("user_idx")
+        int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
     out: dict[int, list[int]] = {}
     for user in user_indices:

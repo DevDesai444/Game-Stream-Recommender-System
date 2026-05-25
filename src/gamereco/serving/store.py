@@ -9,8 +9,6 @@ from sqlalchemy.orm import Session
 from gamereco.common.schemas import RecommendationItem
 from gamereco.serving.db import (
     build_engine,
-    cohort_top_table,
-    game_embeddings_table,
     games_table,
     user_cohorts_table,
     user_recommendations_table,
@@ -105,9 +103,7 @@ class RecommendationStore:
             """
         )
         with Session(self._engine) as session:
-            rows = session.execute(
-                stmt, {"cohort_id": cohort_id, "limit": limit}
-            ).all()
+            rows = session.execute(stmt, {"cohort_id": cohort_id, "limit": limit}).all()
         return [
             RecommendationItem(
                 steam_appid=int(r.steam_appid),

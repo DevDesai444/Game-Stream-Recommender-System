@@ -98,13 +98,17 @@ def train_als(
     val_preds = best_model.transform(val).na.drop(subset=["prediction"])
     rmse = evaluator.evaluate(val_preds)
 
-    user_recs = best_model.recommendForAllUsers(50).select(
-        F.col(user_col),
-        F.explode("recommendations").alias("rec"),
-    ).select(
-        F.col(user_col),
-        F.col("rec.game_idx").alias(item_col),
-        F.col("rec.rating").alias("score"),
+    user_recs = (
+        best_model.recommendForAllUsers(50)
+        .select(
+            F.col(user_col),
+            F.explode("recommendations").alias("rec"),
+        )
+        .select(
+            F.col(user_col),
+            F.col("rec.game_idx").alias(item_col),
+            F.col("rec.rating").alias("score"),
+        )
     )
     truth = ground_truth_from_holdout(val)
     preds = collect_top_k(user_recs, k=10)

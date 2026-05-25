@@ -57,7 +57,7 @@ class SteamClient:
         self._session: aiohttp.ClientSession | None = None
         self._semaphore = asyncio.Semaphore(config.concurrency)
 
-    async def __aenter__(self) -> "SteamClient":
+    async def __aenter__(self) -> SteamClient:
         timeout = aiohttp.ClientTimeout(total=self._config.request_timeout_s)
         self._session = aiohttp.ClientSession(timeout=timeout, headers=DEFAULT_HEADERS)
         return self
@@ -88,9 +88,7 @@ class SteamClient:
                     with attempt:
                         async with self.session.get(url, params=params) as resp:
                             if resp.status == 429 or 500 <= resp.status < 600:
-                                raise RetryableSteamError(
-                                    f"{url} -> HTTP {resp.status}"
-                                )
+                                raise RetryableSteamError(f"{url} -> HTTP {resp.status}")
                             resp.raise_for_status()
                             return await resp.json(content_type=None)
             except RetryError as exc:
@@ -136,7 +134,9 @@ class SteamClient:
     async def friend_list(self, steamid: str) -> dict[str, Any]:
         url = f"{WEB_API}/ISteamUser/GetFriendList/v0001/"
         try:
-            payload = await self._get_json(url, params={"steamid": steamid, "relationship": "friend"})
+            payload = await self._get_json(
+                url, params={"steamid": steamid, "relationship": "friend"}
+            )
         except aiohttp.ClientResponseError as exc:
             if exc.status == 401:
                 return {"steamid": steamid, "friends": []}
@@ -164,9 +164,7 @@ class SteamClient:
                 with attempt:
                     async with self.session.get(url, params=params) as resp:
                         if resp.status == 429 or 500 <= resp.status < 600:
-                            raise RetryableSteamError(
-                                f"appdetails {appid} -> HTTP {resp.status}"
-                            )
+                            raise RetryableSteamError(f"appdetails {appid} -> HTTP {resp.status}")
                         resp.raise_for_status()
                         payload = await resp.json(content_type=None)
         node = payload.get(str(appid))

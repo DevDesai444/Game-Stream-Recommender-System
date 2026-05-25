@@ -21,9 +21,7 @@ KEY_PREFIX = "gamereco:recs:"
 class RecommendationCache:
     def __init__(self, client: redis.Redis | None = None) -> None:
         cfg = redis_settings()
-        self._client = client or redis.Redis(
-            host=cfg.host, port=cfg.port, decode_responses=True
-        )
+        self._client = client or redis.Redis(host=cfg.host, port=cfg.port, decode_responses=True)
         self._ttl = cfg.ttl_seconds
 
     @staticmethod

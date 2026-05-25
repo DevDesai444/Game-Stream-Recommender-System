@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 import torch
@@ -13,8 +12,8 @@ from gamereco.training.ncf import (
     NCFGrid,
     NCFModel,
     iter_configs,
-    save_ncf,
     load_ncf,
+    save_ncf,
 )
 
 

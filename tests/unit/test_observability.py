@@ -55,7 +55,7 @@ def test_served_from_header_propagates_to_metrics(client: TestClient) -> None:
     api_module.app.state.cache.get.return_value = [_item()]
     client.get("/recommendations/u_cache")
     body = client.get("/metrics").text
-    assert "served_from=\"cache\"" in body or "served_from" in body
+    assert 'served_from="cache"' in body or "served_from" in body
 
 
 def test_metrics_counter_increments_per_status(client: TestClient) -> None:

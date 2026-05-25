@@ -107,8 +107,7 @@ def materialise_silver(
     qualified_users = user_counts[user_counts >= min_interactions_per_user].index
     qualified_games = game_counts[game_counts >= min_interactions_per_game].index
     filtered = collapsed[
-        collapsed["user_id"].isin(qualified_users)
-        & collapsed["game_name"].isin(qualified_games)
+        collapsed["user_id"].isin(qualified_users) & collapsed["game_name"].isin(qualified_games)
     ].copy()
 
     user_index = {u: i for i, u in enumerate(sorted(filtered["user_id"].unique()))}
@@ -163,8 +162,9 @@ def temporal_split_pandas(
     silver = silver.copy()
     # Stable tiebreaker: hash of (user, game) so equal-playtime rows
     # still split deterministically.
-    silver["_tiebreak"] = (silver["user_idx"].astype(int) * 1_000_003
-                           + silver["game_idx"].astype(int))
+    silver["_tiebreak"] = silver["user_idx"].astype(int) * 1_000_003 + silver["game_idx"].astype(
+        int
+    )
     silver = silver.sort_values(
         ["user_idx", "play_hours", "_tiebreak"], ascending=[True, True, True]
     )

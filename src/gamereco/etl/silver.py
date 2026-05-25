@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import math
 
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import Window
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 from gamereco.common.logging import get_logger
@@ -34,9 +33,7 @@ def _explode_owned_games(owned: DataFrame) -> DataFrame:
             F.col("steamid").alias("user_id"),
             F.col("g.appid").cast("int").alias("steam_appid"),
             F.col("g.playtime_forever").cast("int").alias("playtime_minutes"),
-            F.coalesce(F.col("g.playtime_2weeks"), F.lit(0))
-            .cast("int")
-            .alias("playtime_2weeks"),
+            F.coalesce(F.col("g.playtime_2weeks"), F.lit(0)).cast("int").alias("playtime_2weeks"),
             F.col("ingested_at"),
         )
         .filter(F.col("steam_appid").isNotNull())
@@ -58,7 +55,10 @@ def _attach_event_ts(df: DataFrame) -> DataFrame:
         "event_ts",
         F.from_unixtime(
             F.unix_timestamp("ingested_at")
-            - (F.lit(60 * 60 * 24 * 14) - F.least(F.col("playtime_2weeks"), F.lit(60 * 60 * 24 * 14)))
+            - (
+                F.lit(60 * 60 * 24 * 14)
+                - F.least(F.col("playtime_2weeks"), F.lit(60 * 60 * 24 * 14))
+            )
         ).cast("timestamp"),
     )
 
@@ -110,9 +110,7 @@ def build_silver(spark: SparkSession, lake: LakePaths) -> dict[str, int]:
         )
     )
 
-    silver_interactions.write.format("delta").mode("overwrite").save(
-        str(lake.silver_interactions)
-    )
+    silver_interactions.write.format("delta").mode("overwrite").save(str(lake.silver_interactions))
 
     silver_users = summaries.join(user_idx, F.col("steamid") == F.col("user_id"), "inner").select(
         "user_idx",

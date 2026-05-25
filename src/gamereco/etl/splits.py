@@ -29,8 +29,8 @@ class SplitFractions:
 
 
 def temporal_split(
-    interactions: "DataFrame", fractions: SplitFractions = SplitFractions()
-) -> tuple["DataFrame", "DataFrame", "DataFrame"]:
+    interactions: DataFrame, fractions: SplitFractions = SplitFractions()
+) -> tuple[DataFrame, DataFrame, DataFrame]:
     """Return (train, val, test) DataFrames with per-user temporal hold-out."""
     from pyspark.sql import Window
     from pyspark.sql import functions as F
@@ -48,8 +48,8 @@ def temporal_split(
     )
 
     test = ranked.filter(F.col("rn") <= F.col("test_cut")).drop("rn", "n", "test_cut", "val_cut")
-    val = ranked.filter(
-        (F.col("rn") > F.col("test_cut")) & (F.col("rn") <= F.col("val_cut"))
-    ).drop("rn", "n", "test_cut", "val_cut")
+    val = ranked.filter((F.col("rn") > F.col("test_cut")) & (F.col("rn") <= F.col("val_cut"))).drop(
+        "rn", "n", "test_cut", "val_cut"
+    )
     train = ranked.filter(F.col("rn") > F.col("val_cut")).drop("rn", "n", "test_cut", "val_cut")
     return train, val, test

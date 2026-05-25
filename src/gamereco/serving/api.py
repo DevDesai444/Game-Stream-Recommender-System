@@ -202,9 +202,7 @@ async def similar(
     started = time.perf_counter()
     items = store.similar_games(steam_appid, limit=limit)
     if not items:
-        raise HTTPException(
-            status_code=404, detail=f"no embedding for appid {steam_appid}"
-        )
+        raise HTTPException(status_code=404, detail=f"no embedding for appid {steam_appid}")
     latency = (time.perf_counter() - started) * 1000
     return RecommendationResponse(
         user_id=str(steam_appid),

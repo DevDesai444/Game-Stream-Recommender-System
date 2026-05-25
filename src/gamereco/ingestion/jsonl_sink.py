@@ -37,7 +37,7 @@ class JsonlSink:
         self._fh.flush()
         self._fh.close()
 
-    def __enter__(self) -> "JsonlSink":
+    def __enter__(self) -> JsonlSink:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

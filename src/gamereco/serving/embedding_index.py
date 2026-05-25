@@ -7,7 +7,6 @@ from pathlib import Path
 import click
 import numpy as np
 from pyspark.ml.recommendation import ALSModel
-from pyspark.sql import functions as F
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session

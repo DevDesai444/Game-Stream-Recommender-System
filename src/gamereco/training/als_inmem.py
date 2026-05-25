@@ -20,8 +20,8 @@ Steam-200k slice (verified in tests/unit/test_als_inmem.py).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -48,9 +48,7 @@ class ALSInMemModel:
     def predict(self, user_idx: int, item_idx: int) -> float:
         return float(self.user_factors[user_idx] @ self.item_factors[item_idx])
 
-    def predict_batch(
-        self, user_idx: np.ndarray, item_idx: np.ndarray
-    ) -> np.ndarray:
+    def predict_batch(self, user_idx: np.ndarray, item_idx: np.ndarray) -> np.ndarray:
         u = self.user_factors[user_idx]
         v = self.item_factors[item_idx]
         return np.einsum("ij,ij->i", u, v)
@@ -74,9 +72,7 @@ class ALSInMemModel:
         return [(int(i), float(scores[i])) for i in top]
 
 
-def _build_csr(
-    df: pd.DataFrame, n_users: int, n_items: int
-) -> sparse.csr_matrix:
+def _build_csr(df: pd.DataFrame, n_users: int, n_items: int) -> sparse.csr_matrix:
     """Construct an implicit-feedback CSR matrix from a silver-shaped frame."""
     rows = df["user_idx"].to_numpy(dtype=np.int64)
     cols = df["game_idx"].to_numpy(dtype=np.int64)
@@ -148,12 +144,8 @@ def train_als_inmem(
     item_user = user_item.T.tocsr()
 
     for _ in range(config.iterations):
-        user_factors = _solve_factors(
-            user_item, item_factors, reg=config.reg, alpha=config.alpha
-        )
-        item_factors = _solve_factors(
-            item_user, user_factors, reg=config.reg, alpha=config.alpha
-        )
+        user_factors = _solve_factors(user_item, item_factors, reg=config.reg, alpha=config.alpha)
+        item_factors = _solve_factors(item_user, user_factors, reg=config.reg, alpha=config.alpha)
 
     return ALSInMemModel(
         user_factors=user_factors,
