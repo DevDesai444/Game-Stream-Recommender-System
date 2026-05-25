@@ -186,8 +186,8 @@ flowchart LR
     DOT --> SCALE[Learnable temperature τ<br/>logit = τ · cos]
     SCALE --> LOSS[BCEWithLogitsLoss<br/>Positives + sampled negatives · ratio 4]
 
-    UNORM -.published as.-> UV[(User vectors · 32-D)]
-    INORM -.published as.-> IV[(Item vectors · 32-D)<br/>→ pgvector ivfflat index)]
+    UNORM -.published as.-> UV[(User vectors · 32-D<br/>warm cache for thin users)]
+    INORM -.published as.-> IV[(Item vectors · 32-D<br/>pgvector ivfflat cosine index)]
 ```
 
 **Key design decisions**:
@@ -209,7 +209,7 @@ flowchart LR
         ALS2 --> EXC
     end
 
-    subgraph Features["Per-(user, candidate) features"]
+    subgraph Features["Per user-candidate features"]
         F1[als_score<br/>ALS predicted preference]
         F2[ncf_score<br/>two-tower cosine]
         F3[user_cluster<br/>K-Means cohort id]
@@ -437,7 +437,7 @@ Every response carries an `X-Request-ID` (UUID4 if the client didn't supply one)
 
 ```mermaid
 flowchart LR
-    PG[(Postgres 16 + pgvector<br/>vector(64) · ivfflat cosine index<br/>games · embeddings · recs · cohorts)]
+    PG[(Postgres 16 + pgvector<br/>vector 64-D · ivfflat cosine index<br/>games · embeddings · recs · cohorts)]
     R[(Redis 7<br/>read-through cache · TTL)]
     M[MLflow 2.13<br/>tracking + registry<br/>Postgres backend]
     MN[(MinIO<br/>S3-compatible<br/>Delta + MLflow artifacts)]
