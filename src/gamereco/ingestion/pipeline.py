@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from gamereco.common.logging import get_logger
@@ -70,11 +70,11 @@ class IngestionPipeline:
                 stats.recently_played += len(recent.get("games", []))
                 stats.friends += len(friends.get("friends", []))
                 if stats.users % 500 == 0:
-                    log.info("ingest.progress", **stats.__dict__)
+                    log.info("ingest.progress", **asdict(stats))
 
             await asyncio.gather(*(_process_user(sid) for sid in steam_ids))
 
-        log.info("ingest.complete", **stats.__dict__)
+        log.info("ingest.complete", **asdict(stats))
         return stats
 
     async def ingest_game_details(

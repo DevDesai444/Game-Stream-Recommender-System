@@ -10,10 +10,10 @@ and the next most recent ``val_frac`` for validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from pyspark.sql import DataFrame
-from pyspark.sql import Window
-from pyspark.sql import functions as F
+if TYPE_CHECKING:  # pragma: no cover
+    from pyspark.sql import DataFrame
 
 
 @dataclass(frozen=True)
@@ -29,9 +29,12 @@ class SplitFractions:
 
 
 def temporal_split(
-    interactions: DataFrame, fractions: SplitFractions = SplitFractions()
-) -> tuple[DataFrame, DataFrame, DataFrame]:
+    interactions: "DataFrame", fractions: SplitFractions = SplitFractions()
+) -> tuple["DataFrame", "DataFrame", "DataFrame"]:
     """Return (train, val, test) DataFrames with per-user temporal hold-out."""
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F
+
     w = Window.partitionBy("user_idx").orderBy(F.col("event_ts").desc())
     ranked = interactions.withColumn("rn", F.row_number().over(w))
     per_user_count = interactions.groupBy("user_idx").count().withColumnRenamed("count", "n")

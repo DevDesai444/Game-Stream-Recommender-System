@@ -1,6 +1,6 @@
-"""PySpark 3.5 + Delta Lake medallion ETL."""
+"""PySpark 3.5 + Delta Lake medallion ETL.
 
-from gamereco.etl.session import build_spark
-from gamereco.etl.splits import temporal_split
-
-__all__ = ["build_spark", "temporal_split"]
+Submodules import ``pyspark`` lazily so unit tests can exercise pure-Python
+helpers (e.g. :class:`gamereco.etl.splits.SplitFractions`) without requiring
+a Spark install.
+"""

@@ -76,9 +76,23 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["src/gamereco"]
+# Spark / MLflow / pgvector heavy modules are covered by the integration
+# stack under tests/integration and the docker-compose smoke tests, not the
+# unit suite — keep them out of the unit-test coverage gate.
 omit = [
     "src/gamereco/**/__main__.py",
     "src/gamereco/**/cli.py",
+    "src/gamereco/etl/bronze.py",
+    "src/gamereco/etl/silver.py",
+    "src/gamereco/etl/gold.py",
+    "src/gamereco/etl/session.py",
+    "src/gamereco/training/als.py",
+    "src/gamereco/training/clustering.py",
+    "src/gamereco/training/mlflow_utils.py",
+    "src/gamereco/serving/embedding_index.py",
+    "src/gamereco/serving/cache_warmer.py",
+    "src/gamereco/serving/store.py",
+    "src/gamereco/ingestion/discovery.py",
 ]
 
 [tool.coverage.report]

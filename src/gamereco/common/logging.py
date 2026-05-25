@@ -12,11 +12,14 @@ import structlog
 def configure_logging(level: str | None = None) -> None:
     """Configure structlog + stdlib logging for the process."""
     log_level = (level or os.environ.get("LOG_LEVEL", "INFO")).upper()
+    level_int = getattr(logging, log_level, logging.INFO)
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=getattr(logging, log_level, logging.INFO),
+        level=level_int,
+        force=True,
     )
+    logging.getLogger().setLevel(level_int)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -26,9 +29,7 @@ def configure_logging(level: str | None = None) -> None:
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, log_level, logging.INFO)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(level_int),
         cache_logger_on_first_use=True,
     )
 
