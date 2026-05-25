@@ -70,14 +70,20 @@ def _als_top_candidates(
         for item in known.get(int(user), ()):
             if 0 <= item < scores.size:
                 scores[item] = -np.inf
-        n = min(n_candidates, scores.size)
+        finite_count = int(np.isfinite(scores).sum())
+        n = min(n_candidates, finite_count)
+        if n <= 0:
+            continue
         top = np.argpartition(-scores, n - 1)[:n]
         for item in top:
+            score = float(scores[int(item)])
+            if not np.isfinite(score):
+                continue
             rows.append(
                 {
                     "user_idx": int(user),
                     "game_idx": int(item),
-                    "als_score": float(scores[int(item)]),
+                    "als_score": score,
                 }
             )
     return pd.DataFrame(rows)

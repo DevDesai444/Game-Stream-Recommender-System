@@ -105,10 +105,10 @@
     }
   },
   "timings_seconds": {
-    "als": 19.92,
-    "cooccurrence": 0.96,
-    "hybrid": 38.66,
+    "als": 38.13,
+    "cooccurrence": 0.98,
+    "hybrid": 47.78,
     "popularity": 0.23
   },
-  "wall_clock_seconds": 72.02
+  "wall_clock_seconds": 106.85
 }
