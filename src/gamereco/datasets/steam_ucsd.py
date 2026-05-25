@@ -337,6 +337,10 @@ def load_ucsd(config: UCSDLoadConfig) -> UCSDLoadResult:
     )
     # Floor for the "owned-but-never-played" rows so they still register.
     interactions.loc[interactions["confidence"] == 0.0, "confidence"] = np.log1p(1.0)
+    # Alias to the column name used by the Spark-side silver schema so
+    # the same hybrid harness ingests both datasets without a branch.
+    # 'playtime_forever' as returned by the Steam Web API is in minutes.
+    interactions["playtime_minutes"] = interactions["playtime_forever"]
 
     interactions, user_index, game_index = _assign_indices(
         interactions,
