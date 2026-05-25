@@ -127,6 +127,11 @@ ignore = [
 "scripts/*" = ["B008", "N806"]
 "tests/*" = ["N806", "B008", "B007"]
 
+[tool.ruff.lint.isort]
+# Pin the first-party set so import grouping is identical across ruff
+# versions (older ruff defaults treated gamereco as third-party).
+known-first-party = ["gamereco"]
+
 [tool.black]
 line-length = 100
 target-version = ["py310"]
