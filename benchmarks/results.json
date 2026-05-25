@@ -1,0 +1,114 @@
+{
+  "config": {
+    "alpha": 20.0,
+    "als_factors": 64,
+    "als_iters": 12,
+    "candidates": 200,
+    "k": 10,
+    "kmeans_k": 16,
+    "ncf_enabled": true,
+    "ncf_epochs": 4,
+    "reg": 0.05
+  },
+  "dataset": {
+    "n_items": 3978,
+    "n_users": 5217,
+    "path": "data/raw/steam-200k.csv",
+    "raw_rows": 200000,
+    "silver_rows": 119005,
+    "test_rows": 13380,
+    "train_rows": 92245,
+    "val_rows": 13380
+  },
+  "lift": {
+    "hybrid_vs_als_test": 0.337,
+    "hybrid_vs_als_val": 0.4083,
+    "hybrid_vs_popularity_val": 1.7926
+  },
+  "metrics": {
+    "als": {
+      "coverage@k": 0.281297,
+      "diversity@k": 0.796974,
+      "hit_rate@k": 0.475916,
+      "k": 10,
+      "map@k": 0.22589,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.273987,
+      "novelty@k": 9.078248,
+      "recall@k": 0.373632
+    },
+    "als_test": {
+      "coverage@k": 0.281297,
+      "diversity@k": 0.796974,
+      "hit_rate@k": 0.467856,
+      "k": 10,
+      "map@k": 0.190753,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.245409,
+      "novelty@k": 9.078248,
+      "recall@k": 0.362236
+    },
+    "cooccurrence": {
+      "coverage@k": 0.155857,
+      "diversity@k": 0.0,
+      "hit_rate@k": 0.43696,
+      "k": 10,
+      "map@k": 0.214663,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.258676,
+      "novelty@k": 7.913532,
+      "recall@k": 0.352063
+    },
+    "hybrid": {
+      "coverage@k": 0.226998,
+      "diversity@k": 0.855303,
+      "hit_rate@k": 0.613126,
+      "k": 10,
+      "map@k": 0.328344,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.38586,
+      "novelty@k": 8.555197,
+      "recall@k": 0.488414
+    },
+    "hybrid_test": {
+      "coverage@k": 0.226998,
+      "diversity@k": 0.855303,
+      "hit_rate@k": 0.623681,
+      "k": 10,
+      "map@k": 0.24735,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.328118,
+      "novelty@k": 8.555197,
+      "recall@k": 0.493742
+    },
+    "ncf": {
+      "coverage@k": 0.380593,
+      "diversity@k": 0.202021,
+      "hit_rate@k": 0.083669,
+      "k": 10,
+      "map@k": 0.01661,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.027331,
+      "novelty@k": 10.150294,
+      "recall@k": 0.047043
+    },
+    "popularity": {
+      "coverage@k": 0.00553,
+      "diversity@k": 0.0,
+      "hit_rate@k": 0.320476,
+      "k": 10,
+      "map@k": 0.096633,
+      "n_users_scored": 5211,
+      "ndcg@k": 0.138171,
+      "novelty@k": 7.709296,
+      "recall@k": 0.221677
+    }
+  },
+  "timings_seconds": {
+    "als": 19.92,
+    "cooccurrence": 0.96,
+    "hybrid": 38.66,
+    "popularity": 0.23
+  },
+  "wall_clock_seconds": 72.02
+}
