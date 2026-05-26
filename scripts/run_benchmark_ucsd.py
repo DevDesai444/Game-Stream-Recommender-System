@@ -56,10 +56,33 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reg", type=float, default=0.05)
     p.add_argument("--kmeans-k", type=int, default=16)
     p.add_argument("--candidates", type=int, default=200)
-    p.add_argument("--two-tower-epochs", type=int, default=4)
-    p.add_argument("--two-tower-embedding-dim", type=int, default=32)
-    p.add_argument("--two-tower-hidden", type=int, nargs="+", default=[128, 64])
-    p.add_argument("--two-tower-output-dim", type=int, default=32)
+    p.add_argument("--two-tower-epochs", type=int, default=15)
+    p.add_argument("--two-tower-embedding-dim", type=int, default=64)
+    p.add_argument("--two-tower-hidden", type=int, nargs="+", default=[256, 128])
+    p.add_argument("--two-tower-output-dim", type=int, default=64)
+    p.add_argument("--two-tower-hard-negatives", type=int, default=4)
+    p.add_argument(
+        "--two-tower-min-playtime",
+        type=float,
+        default=30.0,
+        help="Drop training rows with playtime < this (minutes). 0 disables.",
+    )
+    p.add_argument(
+        "--two-tower-loss",
+        choices=("sampled_softmax", "bce"),
+        default="sampled_softmax",
+    )
+    p.add_argument(
+        "--ncf-candidate-k",
+        type=int,
+        default=50,
+        help="Mix this many NCF top-K candidates into the ALS candidate pool. 0 disables.",
+    )
+    p.add_argument(
+        "--xgb-objective",
+        choices=("rank:ndcg", "rank:pairwise"),
+        default="rank:ndcg",
+    )
     return p.parse_args()
 
 
@@ -163,7 +186,12 @@ def main() -> int:
     )
 
     # 4. Two-tower NCF (with real content features)
-    print("training: two-tower NCF with content features")
+    print(
+        f"training: two-tower NCF with content features "
+        f"(loss={args.two_tower_loss}, epochs={args.two_tower_epochs}, "
+        f"hard_neg={args.two_tower_hard_negatives}, "
+        f"min_playtime={args.two_tower_min_playtime})"
+    )
     t0 = time.time()
     tt_artifacts = train_two_tower(
         train_df,
@@ -178,7 +206,11 @@ def main() -> int:
             tower_hidden=tuple(args.two_tower_hidden),
             output_dim=args.two_tower_output_dim,
             epochs=args.two_tower_epochs,
+            sampled_softmax=(args.two_tower_loss == "sampled_softmax"),
+            hard_negatives_per_pos=args.two_tower_hard_negatives,
+            min_playtime_minutes=args.two_tower_min_playtime,
         ),
+        val_df=val_df,
     )
     timings["two_tower"] = round(time.time() - t0, 2)
     tt_preds = two_tower_topk(tt_artifacts, train_df, val_users, k=args.k)
@@ -191,15 +223,14 @@ def main() -> int:
         item_embeddings=tt_artifacts.item_vectors,
     )
 
-    # 5. Hybrid (ALS candidates + two-tower NCF score + KMeans + XGBoost)
+    # 5. Hybrid: trained two-tower passes in as the NCF channel; the
+    # ranker sees candidates from both ALS and NCF when
+    # ncf_candidate_k > 0 (union retrieval).
     print(
-        f"training: hybrid (kmeans={args.kmeans_k}, candidates={args.candidates}) "
-        "with two-tower as ncf signal"
+        f"training: hybrid (kmeans={args.kmeans_k}, candidates={args.candidates}, "
+        f"ncf_candidate_k={args.ncf_candidate_k}, objective={args.xgb_objective})"
     )
     t0 = time.time()
-    # Reuse the hybrid harness — but inject the two-tower scores
-    # as the 'ncf' channel by passing pre-trained user/item vectors
-    # in place of the quick NeuMF default.
     bundle = train_hybrid(
         train_df,
         val_df,
@@ -213,45 +244,10 @@ def main() -> int:
         ),
         kmeans_k=args.kmeans_k,
         n_candidates=args.candidates,
-        use_ncf=False,  # we'll inject the two-tower embeddings directly
-    )
-    bundle.ncf_user_emb = tt_artifacts.user_vectors
-    bundle.ncf_item_emb = tt_artifacts.item_vectors
-    # The bundle already has ALS + clusters + XGBoost trained on
-    # ALS-only candidates. Retrain XGBoost with the two-tower channel
-    # now populated by re-running the candidate assembly + booster.
-    from gamereco.training.hybrid import assemble_candidates
-    import xgboost as xgb
-
-    cand = assemble_candidates(
-        train_df,
-        val_df,
-        als=bundle.als,
-        user_clusters=bundle.user_clusters,
-        n_candidates=args.candidates,
-        ncf_user_emb=tt_artifacts.user_vectors,
-        ncf_item_emb=tt_artifacts.item_vectors,
-    )
-    X = cand.df[bundle.feature_columns].copy()
-    X["user_cluster"] = X["user_cluster"].astype("category")
-    y = cand.df["label"].to_numpy()
-    group = cand.df.groupby("user_idx").size().to_numpy()
-    dmatrix = xgb.DMatrix(X, label=y, group=group, enable_categorical=True)
-    bundle.booster = xgb.train(
-        {
-            "objective": "rank:pairwise",
-            "eval_metric": "ndcg@10",
-            "eta": 0.05,
-            "max_depth": 6,
-            "subsample": 0.9,
-            "colsample_bytree": 0.9,
-            "lambda": 1.0,
-            "tree_method": "hist",
-            "seed": 42,
-        },
-        dmatrix,
-        num_boost_round=300,
-        verbose_eval=False,
+        use_ncf=False,
+        pretrained_ncf=(tt_artifacts.user_vectors, tt_artifacts.item_vectors),
+        ncf_candidate_k=args.ncf_candidate_k,
+        xgb_objective=args.xgb_objective,
     )
     timings["hybrid"] = round(time.time() - t0, 2)
 
@@ -315,9 +311,16 @@ def main() -> int:
                 "tower_hidden": args.two_tower_hidden,
                 "output_dim": args.two_tower_output_dim,
                 "epochs": args.two_tower_epochs,
+                "loss": args.two_tower_loss,
+                "hard_negatives_per_pos": args.two_tower_hard_negatives,
+                "min_playtime_minutes": args.two_tower_min_playtime,
                 "n_genres": tt_artifacts.spec.n_genres,
                 "n_tags": tt_artifacts.spec.n_tags,
+                "best_epoch": tt_artifacts.best_epoch,
+                "val_ndcg_history": tt_artifacts.val_ndcg_history,
             },
+            "ncf_candidate_k": args.ncf_candidate_k,
+            "xgb_objective": args.xgb_objective,
         },
         "timings_seconds": timings,
         "metrics": {name: result.as_dict() for name, result in results.items()},
