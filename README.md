@@ -14,11 +14,11 @@ Every headline number below is reproduced end-to-end from a clean checkout in un
 |---|---:|---:|---:|---:|
 | Popularity baseline    | 0.167 | 0.142 | 0.086 | 0.647 |
 | Item co-occurrence     | 0.096 | 0.093 | 0.042 | 0.480 |
-| Two-tower NCF          | 0.109 | 0.102 | 0.052 | 0.499 |
+| Two-tower NCF          | 0.225 | 0.203 | 0.123 | 0.745 |
 | Implicit ALS (tuned)   | 0.128 | 0.146 | 0.070 | 0.510 |
-| **Hybrid ensemble**    | **0.311** | **0.313** | **0.178** | **0.883** |
+| **Hybrid ensemble**    | **0.295** | **0.316** | **0.164** | **0.888** |
 
-**+142.7% NDCG@10 over the tuned ALS baseline** on a held-out test split that no model in the pipeline ever sees during training or tuning. Hit rate climbs from 51% (ALS) to 88% (hybrid). Recall@10 climbs from 0.146 to 0.313, MAP from 0.070 to 0.178.
+**+130.6% NDCG@10 over the tuned ALS baseline** on a held-out test split that no model in the pipeline ever sees during training or tuning. Hit rate climbs from 51% (ALS) to 89% (hybrid). Recall@10 climbs from 0.146 to 0.316, MAP from 0.070 to 0.164. The standalone two-tower NCF (sampled-softmax + popularity-sampled hard negatives, see `benchmarks/results_ucsd.md`) now beats ALS by +79% on val NDCG — the headline win of the v2 training recipe.
 
 ### Serving latency (in-process FastAPI, real middleware path)
 
@@ -36,8 +36,8 @@ Every headline number below is reproduced end-to-end from a clean checkout in un
 | Hyperparameter configurations swept | 48 (24 ALS × 24 NCF via CrossValidator) |
 | Compose services | 7 |
 | Airflow DAGs | 3 |
-| Pytest unit tests | 173 (82% branch coverage) |
-| End-to-end benchmark wall clock | 181 s |
+| Pytest unit tests | 178 (82% branch coverage) |
+| End-to-end benchmark wall clock | 239 s |
 
 ---
 
