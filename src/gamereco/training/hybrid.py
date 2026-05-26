@@ -1,14 +1,26 @@
 """End-to-end hybrid recommender harness used by the benchmark runner.
 
 This module wires the laptop-runnable building blocks (in-memory ALS,
-PyTorch NeuMF, KMeans over ALS factors, XGBoost ranker) together so the
-benchmark report has a single ``run_hybrid_benchmark`` entrypoint that
-reproduces the headline numbers end-to-end on Steam-200k.
+PyTorch NeuMF / two-tower, KMeans over ALS factors, XGBoost ranker)
+together so the benchmark report has a single ``train_hybrid``
+entrypoint that reproduces the headline numbers end-to-end.
 
 The Spark / MLflow versions of these stages live next to this module
 and are interface-compatible; the benchmark uses the laptop path
 because Spark / MLflow / pgvector are not appropriate dependencies for
 a reproducibility script that anyone should be able to run locally.
+
+The hybrid composes signals at three layers:
+
+  1. **Retrieval** — top-K candidates per user from ALS, optionally
+     unioned with top-K candidates from the trained two-tower. Mixing
+     retrievers surfaces items where ALS and NCF disagree, which is
+     where the ranker has the most to combine.
+  2. **Featurisation** — ALS score, NCF cosine, NCF rank within the
+     user, an "in NCF top-K" flag, KMeans cluster popularity, log
+     global popularity, and the user's log total playtime.
+  3. **Ranking** — XGBoost ``rank:ndcg`` directly optimises the
+     headline metric using the candidates' label = (item ∈ val truth).
 """
 
 from __future__ import annotations
@@ -45,15 +57,26 @@ class HybridBundle:
     user_clusters: np.ndarray
     booster: xgb.Booster
     feature_columns: list[str] = field(default_factory=list)
+    # Number of NCF candidates to mix in at re-rank time. 0 means the
+    # ranker was trained on ALS-only candidates and we should keep
+    # serving that way at inference (mixing in untrained-on candidates
+    # would skew the score distribution).
+    ncf_candidate_k: int = 0
 
 
-_FEATURES = [
+_FEATURES_BASE = [
     "als_score",
     "ncf_score",
     "user_cluster",
     "cluster_popularity",
     "log_playtime_user",
     "log_global_popularity",
+]
+_FEATURES_WITH_NCF = _FEATURES_BASE + [
+    "ncf_rank",
+    "ncf_in_top_k",
+    "source_als",
+    "source_ncf",
 ]
 
 
@@ -89,12 +112,52 @@ def _als_top_candidates(
     return pd.DataFrame(rows)
 
 
+def _ncf_top_candidates(
+    user_emb: np.ndarray,
+    item_emb: np.ndarray,
+    user_indices: np.ndarray,
+    *,
+    known: dict[int, set[int]],
+    n_candidates: int,
+) -> pd.DataFrame:
+    """Top-K candidates from the two-tower cosine scores.
+
+    Returned rows carry ``ncf_score`` and ``ncf_rank`` for each user,
+    so the caller doesn't have to recompute either downstream.
+    """
+    rows: list[dict[str, float]] = []
+    for user in user_indices:
+        u = int(user)
+        if u >= user_emb.shape[0]:
+            continue
+        scores = item_emb @ user_emb[u]
+        for item in known.get(u, ()):
+            if 0 <= item < scores.size:
+                scores[int(item)] = -np.inf
+        finite = int(np.isfinite(scores).sum())
+        n = min(n_candidates, finite)
+        if n <= 0:
+            continue
+        top = np.argpartition(-scores, n - 1)[:n]
+        top = top[np.argsort(-scores[top])]
+        for rank, item in enumerate(top.tolist()):
+            rows.append(
+                {
+                    "user_idx": u,
+                    "game_idx": int(item),
+                    "ncf_score_retr": float(scores[int(item)]),
+                    "ncf_rank": int(rank),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _ncf_score(
     user_emb: np.ndarray | None,
     item_emb: np.ndarray | None,
     candidates: pd.DataFrame,
 ) -> np.ndarray:
-    if user_emb is None or item_emb is None:
+    if user_emb is None or item_emb is None or len(candidates) == 0:
         return np.zeros(len(candidates), dtype=np.float64)
     u = user_emb[candidates["user_idx"].to_numpy()]
     v = item_emb[candidates["game_idx"].to_numpy()]
@@ -143,11 +206,11 @@ def _train_ncf_quick(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Train a short PyTorch NeuMF and return (user_emb, item_emb).
 
-    Uses a pure-NumPy negative sampler (vectorised across the whole
-    epoch in one shot) rather than a per-sample DataLoader so the
-    laptop benchmark finishes in seconds. The production grid-search
-    NCF in :mod:`gamereco.training.ncf` still uses the configurable
-    InteractionDataset for full sweeps.
+    Used by the steam-200k benchmark where the catalogue is tiny (~4K
+    items) and where training a full content-aware two-tower is
+    overkill. For UCSD the production path is to pass a trained
+    ``TwoTowerArtifacts`` into :func:`train_hybrid` directly and skip
+    this entirely.
     """
     import os
 
@@ -155,10 +218,6 @@ def _train_ncf_quick(
 
     from gamereco.training.ncf import NCFConfig, NCFModel
 
-    # On macOS the default PyTorch OMP / MKL threadpool occasionally
-    # deadlocks during the first Embedding lookup against many users
-    # at once. Pinning the thread count avoids the deadlock and is a
-    # no-op when the env is already constrained.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     torch.set_num_threads(1)
@@ -188,14 +247,9 @@ def _train_ncf_quick(
     n_pos = pos_users.size
     n_neg = n_pos * negative_ratio
 
-    for epoch in range(epochs):
-        # Vectorised epoch-level negative sampling. We over-sample by
-        # 20% and rejection-filter against per-user positives in one
-        # numpy pass; for a 92K-row training set the rejection rate is
-        # negligible (catalogue has ~4K items, avg user has ~20).
+    for _epoch in range(epochs):
         neg_users = np.repeat(pos_users, negative_ratio)
         sampled = rng.integers(0, n_items, size=int(n_neg * 1.2))
-        # Lazy per-user rejection — only the first n_neg accepted.
         accepted_neg = np.empty(n_neg, dtype=np.int64)
         write = 0
         read = 0
@@ -206,7 +260,6 @@ def _train_ncf_quick(
                 accepted_neg[write] = cand
                 write += 1
             read += 1
-        # Top up with random items if we ran out (vanishingly rare).
         while write < n_neg:
             u = int(neg_users[write])
             cand = int(rng.integers(0, n_items))
@@ -248,12 +301,105 @@ def assemble_candidates(
     n_candidates: int,
     ncf_user_emb: np.ndarray | None,
     ncf_item_emb: np.ndarray | None,
+    ncf_candidate_k: int = 0,
 ) -> HybridCandidates:
+    """Assemble candidate rows for the ranker.
+
+    When ``ncf_candidate_k > 0`` and NCF embeddings are provided, the
+    candidate set is the **union** of ALS top-N and NCF top-K per user.
+    Items missing an ALS score (NCF-only candidates) are filled by
+    re-scoring against ALS so the ranker sees both signals on every
+    row. ``source_als`` / ``source_ncf`` boolean features tell the
+    ranker which retriever surfaced each row (or both).
+    """
     known = {
         int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
     user_indices = val_df["user_idx"].unique()
-    cand = _als_top_candidates(als, user_indices, known=known, n_candidates=n_candidates)
+    use_ncf_retrieval = (
+        ncf_candidate_k > 0 and ncf_user_emb is not None and ncf_item_emb is not None
+    )
+
+    als_cand = _als_top_candidates(als, user_indices, known=known, n_candidates=n_candidates)
+    if use_ncf_retrieval:
+        ncf_cand = _ncf_top_candidates(
+            ncf_user_emb,
+            ncf_item_emb,
+            user_indices,
+            known=known,
+            n_candidates=ncf_candidate_k,
+        )
+        if not ncf_cand.empty:
+            # Union by (user, game). When the same item is surfaced by
+            # both retrievers we keep the ALS row (which already has
+            # als_score populated) and merge in ncf_rank / source flags.
+            als_cand["source_als"] = 1
+            als_cand["source_ncf"] = 0
+            ncf_only = ncf_cand.merge(
+                als_cand[["user_idx", "game_idx"]],
+                on=["user_idx", "game_idx"],
+                how="left",
+                indicator=True,
+            )
+            ncf_only = ncf_only[ncf_only["_merge"] == "left_only"].drop(columns="_merge")
+            if not ncf_only.empty:
+                # Score NCF-only candidates against ALS in one vectorised
+                # pass: stacked factor lookups + einsum is ~100× faster
+                # than per-row score_all_items on a 100K-row union.
+                u_arr = ncf_only["user_idx"].to_numpy(dtype=np.int64)
+                g_arr = ncf_only["game_idx"].to_numpy(dtype=np.int64)
+                u_vecs = als.user_factors[u_arr]
+                v_vecs = als.item_factors[g_arr]
+                ncf_only_scores = np.einsum("ij,ij->i", u_vecs, v_vecs).astype(np.float64)
+                ncf_only = ncf_only.assign(
+                    als_score=ncf_only_scores,
+                    source_als=0,
+                    source_ncf=1,
+                )[["user_idx", "game_idx", "als_score", "source_als", "source_ncf"]]
+                cand = pd.concat([als_cand, ncf_only], ignore_index=True)
+            else:
+                cand = als_cand
+
+            # Annotate ncf_rank for ALL rows (default = ncf_candidate_k for
+            # ALS-only rows that NCF didn't surface in its top-K).
+            rank_lookup = ncf_cand.set_index(["user_idx", "game_idx"])["ncf_rank"].to_dict()
+            cand["ncf_rank"] = [
+                rank_lookup.get((int(u), int(g)), ncf_candidate_k)
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+            cand["ncf_in_top_k"] = (cand["ncf_rank"] < ncf_candidate_k).astype(int)
+            # Mark rows that ALS surfaced even if originally tagged 0.
+            als_set = set(
+                zip(
+                    als_cand["user_idx"].astype(int),
+                    als_cand["game_idx"].astype(int),
+                    strict=False,
+                )
+            )
+            cand["source_als"] = [
+                1 if (int(u), int(g)) in als_set else 0
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+            ncf_set = set(
+                zip(
+                    ncf_cand["user_idx"].astype(int),
+                    ncf_cand["game_idx"].astype(int),
+                    strict=False,
+                )
+            )
+            cand["source_ncf"] = [
+                1 if (int(u), int(g)) in ncf_set else 0
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+        else:
+            cand = als_cand
+            cand["source_als"] = 1
+            cand["source_ncf"] = 0
+            cand["ncf_rank"] = ncf_candidate_k
+            cand["ncf_in_top_k"] = 0
+    else:
+        cand = als_cand
+
     cand["user_cluster"] = user_clusters[cand["user_idx"].to_numpy()]
     cand = cand.merge(_user_features(train_df), on="user_idx", how="left")
     cand = cand.merge(_global_pop(train_df), on="game_idx", how="left")
@@ -287,18 +433,44 @@ def train_hybrid(
     n_candidates: int = 200,
     use_ncf: bool = True,
     ncf_epochs: int = 4,
+    pretrained_ncf: tuple[np.ndarray, np.ndarray] | None = None,
+    ncf_candidate_k: int = 0,
+    xgb_objective: str = "rank:ndcg",
+    xgb_num_boost_round: int = 300,
 ) -> HybridBundle:
-    """Train ALS → KMeans → NCF → XGBoost ranker end-to-end."""
+    """Train ALS → KMeans → (NCF) → XGBoost ranker end-to-end.
+
+    Args:
+        pretrained_ncf: optional ``(user_emb, item_emb)`` to use
+            instead of training a quick NeuMF inline. Pass
+            ``(artifacts.user_vectors, artifacts.item_vectors)`` from
+            :func:`gamereco.training.two_tower.train_two_tower` to
+            re-use a strong, content-aware two-tower without spending
+            another training run inside this function.
+        ncf_candidate_k: when > 0, union ALS top-N candidates with NCF
+            top-K candidates per user. The ranker then learns when to
+            trust each retriever from the ``source_als`` / ``source_ncf``
+            flags. Requires NCF embeddings (either pretrained or trained
+            inline).
+        xgb_objective: ``rank:ndcg`` (default) directly optimises NDCG.
+            ``rank:pairwise`` is the older objective.
+    """
     als = train_als_inmem(train_df, n_users=n_users, n_items=n_items, config=als_config)
     km = KMeans(n_clusters=kmeans_k, random_state=als_config.seed, n_init=4)
     user_clusters = km.fit_predict(als.user_factors).astype(np.int32)
 
-    if use_ncf:
+    if pretrained_ncf is not None:
+        ncf_user, ncf_item = pretrained_ncf
+    elif use_ncf:
         ncf_user, ncf_item = _train_ncf_quick(
             train_df, n_users=n_users, n_items=n_items, epochs=ncf_epochs
         )
     else:
         ncf_user = ncf_item = None
+
+    effective_ncf_candidate_k = (
+        ncf_candidate_k if ncf_user is not None and ncf_item is not None else 0
+    )
 
     cand = assemble_candidates(
         train_df,
@@ -308,15 +480,17 @@ def train_hybrid(
         n_candidates=n_candidates,
         ncf_user_emb=ncf_user,
         ncf_item_emb=ncf_item,
+        ncf_candidate_k=effective_ncf_candidate_k,
     )
 
-    X = cand.df[_FEATURES].copy()
+    features = _FEATURES_WITH_NCF if effective_ncf_candidate_k > 0 else _FEATURES_BASE
+    X = cand.df[features].copy()
     X["user_cluster"] = X["user_cluster"].astype("category")
     y = cand.df["label"].to_numpy()
     group = cand.df.groupby("user_idx").size().to_numpy()
     dmatrix = xgb.DMatrix(X, label=y, group=group, enable_categorical=True)
     params = {
-        "objective": "rank:pairwise",
+        "objective": xgb_objective,
         "eval_metric": "ndcg@10",
         "eta": 0.05,
         "max_depth": 6,
@@ -326,7 +500,7 @@ def train_hybrid(
         "tree_method": "hist",
         "seed": als_config.seed,
     }
-    booster = xgb.train(params, dmatrix, num_boost_round=200, verbose_eval=False)
+    booster = xgb.train(params, dmatrix, num_boost_round=xgb_num_boost_round, verbose_eval=False)
 
     return HybridBundle(
         als=als,
@@ -334,7 +508,8 @@ def train_hybrid(
         ncf_item_emb=ncf_item,
         user_clusters=user_clusters,
         booster=booster,
-        feature_columns=_FEATURES,
+        feature_columns=features,
+        ncf_candidate_k=effective_ncf_candidate_k,
     )
 
 
@@ -346,11 +521,94 @@ def hybrid_rerank(
     n_candidates: int = 200,
     k: int = 10,
 ) -> dict[int, list[int]]:
-    """Score and re-rank ALS candidates with the XGBoost ranker."""
+    """Score and re-rank candidates with the trained XGBoost ranker.
+
+    Mirrors :func:`assemble_candidates` at training time: if the bundle
+    was trained on ALS+NCF unioned candidates, the same union is built
+    here at inference so the feature distribution matches what the
+    ranker was fit on.
+    """
     known = {
         int(u): set(int(g) for g in group["game_idx"]) for u, group in train_df.groupby("user_idx")
     }
-    cand = _als_top_candidates(bundle.als, user_indices, known=known, n_candidates=n_candidates)
+    use_ncf_retrieval = (
+        bundle.ncf_candidate_k > 0
+        and bundle.ncf_user_emb is not None
+        and bundle.ncf_item_emb is not None
+    )
+
+    als_cand = _als_top_candidates(
+        bundle.als, user_indices, known=known, n_candidates=n_candidates
+    )
+    if use_ncf_retrieval:
+        ncf_cand = _ncf_top_candidates(
+            bundle.ncf_user_emb,
+            bundle.ncf_item_emb,
+            user_indices,
+            known=known,
+            n_candidates=bundle.ncf_candidate_k,
+        )
+        if not ncf_cand.empty:
+            als_cand["source_als"] = 1
+            als_cand["source_ncf"] = 0
+            ncf_only = ncf_cand.merge(
+                als_cand[["user_idx", "game_idx"]],
+                on=["user_idx", "game_idx"],
+                how="left",
+                indicator=True,
+            )
+            ncf_only = ncf_only[ncf_only["_merge"] == "left_only"].drop(columns="_merge")
+            if not ncf_only.empty:
+                u_arr = ncf_only["user_idx"].to_numpy(dtype=np.int64)
+                g_arr = ncf_only["game_idx"].to_numpy(dtype=np.int64)
+                u_vecs = bundle.als.user_factors[u_arr]
+                v_vecs = bundle.als.item_factors[g_arr]
+                ncf_only_scores = np.einsum("ij,ij->i", u_vecs, v_vecs).astype(np.float64)
+                ncf_only = ncf_only.assign(
+                    als_score=ncf_only_scores,
+                    source_als=0,
+                    source_ncf=1,
+                )[["user_idx", "game_idx", "als_score", "source_als", "source_ncf"]]
+                cand = pd.concat([als_cand, ncf_only], ignore_index=True)
+            else:
+                cand = als_cand
+            rank_lookup = ncf_cand.set_index(["user_idx", "game_idx"])["ncf_rank"].to_dict()
+            cand["ncf_rank"] = [
+                rank_lookup.get((int(u), int(g)), bundle.ncf_candidate_k)
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+            cand["ncf_in_top_k"] = (cand["ncf_rank"] < bundle.ncf_candidate_k).astype(int)
+            als_set = set(
+                zip(
+                    als_cand["user_idx"].astype(int),
+                    als_cand["game_idx"].astype(int),
+                    strict=False,
+                )
+            )
+            cand["source_als"] = [
+                1 if (int(u), int(g)) in als_set else 0
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+            ncf_set = set(
+                zip(
+                    ncf_cand["user_idx"].astype(int),
+                    ncf_cand["game_idx"].astype(int),
+                    strict=False,
+                )
+            )
+            cand["source_ncf"] = [
+                1 if (int(u), int(g)) in ncf_set else 0
+                for u, g in zip(cand["user_idx"], cand["game_idx"], strict=False)
+            ]
+        else:
+            cand = als_cand
+            cand["source_als"] = 1
+            cand["source_ncf"] = 0
+            cand["ncf_rank"] = bundle.ncf_candidate_k
+            cand["ncf_in_top_k"] = 0
+    else:
+        cand = als_cand
+
     cand["user_cluster"] = bundle.user_clusters[cand["user_idx"].to_numpy()]
     cand = cand.merge(_user_features(train_df), on="user_idx", how="left")
     cand = cand.merge(_global_pop(train_df), on="game_idx", how="left")
