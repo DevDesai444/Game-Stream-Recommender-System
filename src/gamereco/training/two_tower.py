@@ -3,24 +3,28 @@
 Architecture:
 
   user tower:    [user_id_embedding ⊕ continuous_user_features]
-                 → Linear → ReLU → Dropout → Linear → user_vector ∈ R^d
+                 → Linear → LayerNorm → ReLU → Dropout → ... → user_vector ∈ R^d
 
   item tower:    [item_id_embedding ⊕ multi_hot_genres
                   ⊕ multi_hot_tags ⊕ continuous_item_features]
-                 → Linear → ReLU → Dropout → Linear → item_vector ∈ R^d
+                 → Linear → LayerNorm → ReLU → Dropout → ... → item_vector ∈ R^d
 
-  score(u, i) = sigmoid( user_vector(u) · item_vector(i) )
+  score(u, i) = scale * cos(user_vector(u), item_vector(i))
 
-Trained with binary cross-entropy on observed positives + sampled
-negatives. Unlike the bare-embeddings NeuMF in
-:mod:`gamereco.training.ncf`, this model lets brand-new items (or new
-users) be scored from their features alone — the content towers
-produce a vector even when the id-embedding is freshly initialised,
-which is exactly the cold-item story we couldn't tell on steam-200k.
+The training loss is **sampled softmax with in-batch negatives** plus an
+optional pool of *hard* popularity-sampled negatives, with a logQ
+correction so popular items aren't unfairly penalised (the YouTube
+recsys paper, Bengio et al.). This replaces the older
+positives-vs-random-negatives BCE — sampled softmax directly
+approximates listwise ranking, which is what NDCG measures.
+
+Validation NDCG@K is monitored every epoch with early stopping on a
+plateau, so we don't ship a model that has overfit train loss.
 
 The two tower vectors are also useful artifacts independent of the
-score head: they go into the pgvector item-similarity index and
-become a candidate generator for the XGBoost ranker.
+score head: they feed the pgvector item-similarity index and become a
+candidate generator for the XGBoost ranker in
+:mod:`gamereco.training.hybrid`.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # ---------- Content feature builders ----------
 
@@ -182,15 +187,42 @@ class TwoTowerConfig:
     n_tags: int
     n_user_dense: int = 4
     n_item_dense: int = 5
-    embedding_dim: int = 32
-    tower_hidden: tuple[int, ...] = (128, 64)
-    output_dim: int = 32
-    dropout: float = 0.1
+    embedding_dim: int = 64
+    tower_hidden: tuple[int, ...] = (256, 128)
+    output_dim: int = 64
+    dropout: float = 0.2
     learning_rate: float = 1e-3
     weight_decay: float = 1e-6
-    batch_size: int = 8192
-    epochs: int = 4
+    # 1024 keeps the in-batch positive mask under ~5MB per step (the
+    # mask is B × (B + hard_negatives_per_pos × B) bool). With 8192,
+    # the same mask was ~335MB per step and dominated wall clock /
+    # memory pressure on real-sized datasets.
+    batch_size: int = 1024
+    epochs: int = 15
+    # Loss / sampling. With sampled_softmax=True every positive in the
+    # batch uses the other positives' items as in-batch negatives, plus
+    # ``hard_negatives_per_pos`` extra negatives drawn proportional to
+    # item popularity (hard negatives). This is the standard
+    # YouTube/two-tower retrieval recipe.
+    sampled_softmax: bool = True
+    hard_negatives_per_pos: int = 4
+    # Random (uniform) negatives are only used when sampled_softmax=False
+    # — the legacy BCE path is retained for the steam-200k benchmark
+    # which has tiny n_items and where in-batch negatives degenerate.
     negative_ratio: int = 4
+    # logQ popularity correction strength (1.0 = full correction).
+    logq_correction: float = 1.0
+    # Learnable score scale init. ~10 gives early logits in [-10, 10]
+    # which is a comfortable softmax / BCE regime.
+    init_scale: float = 10.0
+    # Training-data hygiene knobs.
+    min_playtime_minutes: float = 0.0
+    use_confidence_weights: bool = True
+    # Cosine LR schedule + early stopping on validation NDCG@K.
+    use_lr_schedule: bool = True
+    early_stopping_patience: int = 3
+    eval_k: int = 10
+    eval_max_users: int = 512
     seed: int = 42
 
 
@@ -200,7 +232,7 @@ class _Tower(nn.Module):
         layers: list[nn.Module] = []
         prev = in_dim
         for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
+            layers += [nn.Linear(prev, h), nn.LayerNorm(h), nn.ReLU(), nn.Dropout(dropout)]
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
@@ -215,7 +247,7 @@ class _Tower(nn.Module):
 
 
 class TwoTowerModel(nn.Module):
-    """Two-tower NCF: dot-product score between user and item vectors."""
+    """Two-tower NCF: scaled-cosine score between user and item vectors."""
 
     def __init__(self, cfg: TwoTowerConfig) -> None:
         super().__init__()
@@ -228,19 +260,12 @@ class TwoTowerModel(nn.Module):
         item_in = cfg.embedding_dim + cfg.n_genres + cfg.n_tags + cfg.n_item_dense
         self.user_tower = _Tower(user_in, cfg.tower_hidden, cfg.output_dim, cfg.dropout)
         self.item_tower = _Tower(item_in, cfg.tower_hidden, cfg.output_dim, cfg.dropout)
-        # Learnable temperature for the cosine score. Initialised so
-        # the early-training logits sit at ~log(20) = ~3 in absolute
-        # value, which is a comfortable BCE regime.
-        self.scale = nn.Parameter(torch.tensor(10.0))
+        self.scale = nn.Parameter(torch.tensor(float(cfg.init_scale)))
 
     def encode_user(self, user_idx: torch.Tensor, user_dense: torch.Tensor) -> torch.Tensor:
         emb = self.user_emb(user_idx)
         out = self.user_tower(torch.cat([emb, user_dense], dim=-1))
-        # L2-normalise so the dot product is bounded (turns into a
-        # cosine similarity scaled by self.scale). This is the standard
-        # two-tower-retrieval setup that keeps BCE losses from blowing
-        # up when feature inputs are high-dimensional one-hots.
-        return nn.functional.normalize(out, p=2, dim=-1)
+        return F.normalize(out, p=2, dim=-1)
 
     def encode_item(
         self,
@@ -251,7 +276,7 @@ class TwoTowerModel(nn.Module):
     ) -> torch.Tensor:
         emb = self.item_emb(item_idx)
         out = self.item_tower(torch.cat([emb, item_genres, item_tags, item_dense], dim=-1))
-        return nn.functional.normalize(out, p=2, dim=-1)
+        return F.normalize(out, p=2, dim=-1)
 
     def forward(
         self,
@@ -262,10 +287,10 @@ class TwoTowerModel(nn.Module):
         item_tags: torch.Tensor,
         item_dense: torch.Tensor,
     ) -> torch.Tensor:
-        """Return raw logits. Caller applies sigmoid (or uses
-        ``BCEWithLogitsLoss`` for training) — pairing logits with
-        the logits-aware loss is numerically stable, whereas
-        sigmoid + BCELoss can round outside ``[0, 1]``."""
+        """Return raw logits. Caller applies sigmoid or uses
+        ``BCEWithLogitsLoss`` / sampled-softmax cross-entropy for
+        training — pairing logits with the logits-aware loss is
+        numerically stable."""
         u = self.encode_user(user_idx, user_dense)
         v = self.encode_item(item_idx, item_genres, item_tags, item_dense)
         cosine = (u * v).sum(dim=-1)
@@ -302,6 +327,56 @@ class TwoTowerArtifacts:
     spec: ContentFeatureSpec
     user_stats: dict[str, float]
     train_loss_history: list[float] = field(default_factory=list)
+    val_ndcg_history: list[float] = field(default_factory=list)
+    best_epoch: int = 0
+
+
+def _ndcg_at_k(scores: np.ndarray, truth: set[int], k: int) -> float:
+    """NDCG@K from a score vector for one user, ignoring untruthed items."""
+    if not truth:
+        return 0.0
+    n = min(k, scores.size)
+    if n <= 0:
+        return 0.0
+    finite = np.isfinite(scores)
+    if not finite.any():
+        return 0.0
+    top = np.argpartition(-scores, n - 1)[:n]
+    top = top[np.argsort(-scores[top])]
+    dcg = 0.0
+    for rank, item in enumerate(top.tolist()):
+        if item in truth:
+            dcg += 1.0 / math.log2(rank + 2)
+    ideal = sum(1.0 / math.log2(i + 2) for i in range(min(len(truth), k)))
+    return dcg / ideal if ideal > 0 else 0.0
+
+
+def _val_ndcg(
+    model: TwoTowerModel,
+    user_dense_t: torch.Tensor,
+    item_genres_t: torch.Tensor,
+    item_tags_t: torch.Tensor,
+    item_dense_t: torch.Tensor,
+    truth: dict[int, set[int]],
+    seen: dict[int, set[int]],
+    user_ids: np.ndarray,
+    k: int,
+) -> float:
+    model.eval()
+    with torch.no_grad():
+        item_vecs = model.all_item_vectors(item_genres_t, item_tags_t, item_dense_t)
+        user_vecs = model.all_user_vectors(user_dense_t)
+    ndcgs: list[float] = []
+    for u in user_ids:
+        u = int(u)
+        if u not in truth:
+            continue
+        scores = item_vecs @ user_vecs[u]
+        for blocked in seen.get(u, ()):
+            if 0 <= blocked < scores.size:
+                scores[int(blocked)] = -np.inf
+        ndcgs.append(_ndcg_at_k(scores, truth[u], k))
+    return float(np.mean(ndcgs)) if ndcgs else 0.0
 
 
 def train_two_tower(
@@ -310,13 +385,15 @@ def train_two_tower(
     users: pd.DataFrame,
     *,
     config: TwoTowerConfig | None = None,
+    val_df: pd.DataFrame | None = None,
 ) -> TwoTowerArtifacts:
     """Train the two-tower model end-to-end and return artifacts.
 
-    The training loop is the same vectorised positive + sampled-negative
-    BCE scheme used by :func:`gamereco.training.hybrid._train_ncf_quick`,
-    so it stays under a minute on a laptop on the UCSD slice the
-    benchmark runs against.
+    Defaults to sampled-softmax with in-batch + hard popularity-sampled
+    negatives (see ``TwoTowerConfig``). When ``val_df`` is supplied,
+    validation NDCG@K is monitored each epoch and early stopping kicks
+    in after ``early_stopping_patience`` epochs without improvement —
+    the model state is rolled back to the best-NDCG epoch.
     """
     import os
 
@@ -349,11 +426,29 @@ def train_two_tower(
             }
         )
 
+    # Optional playtime filter on training positives only. The benchmark
+    # docs flag UCSD's "owned but never played" rows as the dominant
+    # source of NCF noise; dropping them at the threshold of meaningful
+    # engagement gives the model cleaner positives without affecting
+    # the eval splits.
+    if cfg.min_playtime_minutes > 0 and "playtime_minutes" in train_df.columns:
+        train_df = train_df[train_df["playtime_minutes"] >= cfg.min_playtime_minutes].reset_index(
+            drop=True
+        )
+    elif cfg.min_playtime_minutes > 0 and "playtime_forever" in train_df.columns:
+        train_df = train_df[train_df["playtime_forever"] >= cfg.min_playtime_minutes].reset_index(
+            drop=True
+        )
+
     torch.manual_seed(cfg.seed)
     model = TwoTowerModel(cfg)
-    loss_fn = nn.BCEWithLogitsLoss()
     optim = torch.optim.Adam(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
+    )
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=max(cfg.epochs, 1))
+        if cfg.use_lr_schedule
+        else None
     )
 
     user_dense_t = torch.from_numpy(user_dense_np)
@@ -363,76 +458,249 @@ def train_two_tower(
 
     pos_users = train_df["user_idx"].to_numpy(dtype=np.int64)
     pos_items = train_df["game_idx"].to_numpy(dtype=np.int64)
+
+    # Per-positive confidence weights from playtime. Normalised to mean 1
+    # so the overall loss magnitude is unchanged and the learning rate
+    # stays comparable across configs with/without weighting.
+    if cfg.use_confidence_weights:
+        pt_col = (
+            "playtime_minutes"
+            if "playtime_minutes" in train_df.columns
+            else ("playtime_forever" if "playtime_forever" in train_df.columns else None)
+        )
+        if pt_col is not None:
+            raw_w = np.log1p(train_df[pt_col].to_numpy(dtype=np.float64))
+            if raw_w.mean() > 0:
+                pos_weights = (raw_w / raw_w.mean()).astype(np.float32)
+            else:
+                pos_weights = np.ones(pos_users.size, dtype=np.float32)
+        else:
+            pos_weights = np.ones(pos_users.size, dtype=np.float32)
+    else:
+        pos_weights = np.ones(pos_users.size, dtype=np.float32)
+
     user_pos: dict[int, set[int]] = {}
     for u, i in zip(pos_users.tolist(), pos_items.tolist(), strict=False):
         user_pos.setdefault(u, set()).add(i)
 
+    # CSR view of (user, item) positives for vectorised in-batch
+    # collision masking inside the sampled-softmax loop. Building this
+    # once outside the loop is the difference between O(B^2) Python
+    # membership checks per batch and a single sparse slice.
+    from scipy.sparse import csr_matrix as _csr
+
+    pos_csr = _csr(
+        (
+            np.ones(pos_items.size, dtype=np.bool_),
+            (pos_users, pos_items),
+        ),
+        shape=(cfg.n_users, cfg.n_items),
+    )
+
+    # Item popularity used for both the logQ correction and for sampling
+    # hard negatives. We add a smoothing prior so brand-new items still
+    # get sampled with non-zero probability.
+    item_counts = np.zeros(cfg.n_items, dtype=np.float64)
+    counts = np.bincount(pos_items, minlength=cfg.n_items)
+    item_counts[: counts.size] = counts
+    item_counts += 1.0  # Laplace prior
+    item_prob = item_counts / item_counts.sum()
+    log_item_prob = np.log(item_prob)
+
+    # Pre-cache validation truth + seen for NDCG monitoring.
+    val_truth: dict[int, set[int]] = {}
+    val_user_sample: np.ndarray = np.empty(0, dtype=np.int64)
+    if val_df is not None and len(val_df) > 0:
+        val_truth = {
+            int(u): set(int(g) for g in group["game_idx"])
+            for u, group in val_df.groupby("user_idx")
+        }
+        rng_val = np.random.default_rng(cfg.seed)
+        all_val_users = np.array(sorted(val_truth.keys()), dtype=np.int64)
+        if all_val_users.size > cfg.eval_max_users:
+            val_user_sample = rng_val.choice(all_val_users, cfg.eval_max_users, replace=False)
+        else:
+            val_user_sample = all_val_users
+
     rng = np.random.default_rng(cfg.seed)
     n_pos = pos_users.size
-    n_neg = n_pos * cfg.negative_ratio
-    n_items = cfg.n_items
 
-    history: list[float] = []
-    for _epoch in range(cfg.epochs):
-        neg_users = np.repeat(pos_users, cfg.negative_ratio)
-        sampled = rng.integers(0, n_items, size=int(n_neg * 1.2))
-        accepted_neg = np.empty(n_neg, dtype=np.int64)
-        write = 0
-        read = 0
-        while write < n_neg and read < sampled.size:
-            u = int(neg_users[write])
-            cand = int(sampled[read])
-            if cand not in user_pos.get(u, ()):
-                accepted_neg[write] = cand
-                write += 1
-            read += 1
-        # Top up if oversampling underdelivered. Bail out after a
-        # reasonable number of attempts — in pathological tiny-corpus
-        # tests where users already own every item, no valid negative
-        # exists and we'd otherwise spin forever.
-        retries = 0
-        max_retries = max(10 * n_neg, 1000)
-        while write < n_neg and retries < max_retries:
-            u = int(neg_users[write])
-            cand = int(rng.integers(0, n_items))
-            if cand not in user_pos.get(u, ()):
-                accepted_neg[write] = cand
-                write += 1
-            retries += 1
-        if write < n_neg:
-            # Truncate to what we did sample.
-            accepted_neg = accepted_neg[:write]
-            neg_users = neg_users[:write]
-            n_neg = write
+    loss_history: list[float] = []
+    ndcg_history: list[float] = []
+    best_ndcg = -np.inf
+    best_state: dict[str, torch.Tensor] | None = None
+    best_epoch = 0
+    epochs_since_improvement = 0
 
-        users_all = np.concatenate([pos_users, neg_users])
-        items_all = np.concatenate([pos_items, accepted_neg])
-        labels_all = np.concatenate(
-            [np.ones(n_pos, dtype=np.float32), np.zeros(n_neg, dtype=np.float32)]
-        )
-        perm = rng.permutation(users_all.size)
-        users_all, items_all, labels_all = users_all[perm], items_all[perm], labels_all[perm]
+    log_item_prob_t = torch.from_numpy(log_item_prob.astype(np.float32))
 
+    for epoch in range(cfg.epochs):
         model.train()
-        running = 0.0
-        seen_rows = 0
-        for start in range(0, users_all.size, cfg.batch_size):
-            end = start + cfg.batch_size
-            u_idx = torch.from_numpy(users_all[start:end]).long()
-            i_idx = torch.from_numpy(items_all[start:end]).long()
-            labels = torch.from_numpy(labels_all[start:end]).float()
-            u_dense_batch = user_dense_t[u_idx]
-            i_genres_batch = item_genres_t[i_idx]
-            i_tags_batch = item_tags_t[i_idx]
-            i_dense_batch = item_dense_t[i_idx]
-            optim.zero_grad()
-            preds = model(u_idx, i_idx, u_dense_batch, i_genres_batch, i_tags_batch, i_dense_batch)
-            loss = loss_fn(preds, labels)
-            loss.backward()
-            optim.step()
-            running += float(loss.detach()) * u_idx.size(0)
-            seen_rows += u_idx.size(0)
-        history.append(running / max(seen_rows, 1))
+        perm = rng.permutation(n_pos)
+        users_ep = pos_users[perm]
+        items_ep = pos_items[perm]
+        weights_ep = pos_weights[perm]
+
+        if cfg.sampled_softmax:
+            running_loss = 0.0
+            seen_rows = 0
+            for start in range(0, n_pos, cfg.batch_size):
+                end = start + cfg.batch_size
+                u_batch = users_ep[start:end]
+                i_batch = items_ep[start:end]
+                w_batch = weights_ep[start:end]
+                B = u_batch.size
+
+                # Hard popularity-sampled negatives for the whole batch.
+                # We share negatives across all positives in the batch
+                # (the standard sampled-softmax trick) so the cost is
+                # O(B + H) item-tower evals per step, not O(B * (1 + H)).
+                H = cfg.hard_negatives_per_pos * B if cfg.hard_negatives_per_pos > 0 else 0
+                if H > 0:
+                    hard_items = rng.choice(cfg.n_items, size=H, replace=True, p=item_prob)
+                    all_items = np.concatenate([i_batch, hard_items.astype(np.int64)])
+                else:
+                    all_items = i_batch
+
+                u_idx_t = torch.from_numpy(u_batch).long()
+                i_idx_t = torch.from_numpy(all_items).long()
+                u_dense_batch = user_dense_t[u_idx_t]
+                i_g_batch = item_genres_t[i_idx_t]
+                i_t_batch = item_tags_t[i_idx_t]
+                i_d_batch = item_dense_t[i_idx_t]
+                w_t = torch.from_numpy(w_batch).float()
+
+                optim.zero_grad()
+                u_vecs = model.encode_user(u_idx_t, u_dense_batch)             # [B, d]
+                i_vecs = model.encode_item(i_idx_t, i_g_batch, i_t_batch, i_d_batch)  # [B+H, d]
+                logits = model.scale * (u_vecs @ i_vecs.T)                      # [B, B+H]
+                # logQ correction: subtract log(p_item) for each column
+                # so popular items don't dominate the softmax. This is
+                # the YouTube/Bengio sampling correction.
+                if cfg.logq_correction > 0:
+                    logits = logits - cfg.logq_correction * log_item_prob_t[i_idx_t].unsqueeze(0)
+                # Mask out columns where the candidate item is actually
+                # a positive for the user in the row (in-batch / hard-
+                # negative collision). Without this, an unlucky batch
+                # teaches the model to *down*-weight items the user
+                # really does like. Vectorised via the sparse CSR.
+                mask_np = pos_csr[u_batch][:, all_items].toarray()
+                # Don't mask the row's own true positive (column r).
+                mask_np[np.arange(B), np.arange(B)] = False
+                mask = torch.from_numpy(mask_np)
+                logits = logits.masked_fill(mask, float("-inf"))
+
+                labels = torch.arange(B, dtype=torch.long)
+                per_row_loss = F.cross_entropy(logits, labels, reduction="none")
+                loss = (per_row_loss * w_t).mean()
+                loss.backward()
+                optim.step()
+                running_loss += float(loss.detach()) * B
+                seen_rows += B
+            loss_history.append(running_loss / max(seen_rows, 1))
+        else:
+            # Legacy BCE path with mixed random + popularity-sampled
+            # negatives. Retained for the steam-200k benchmark where
+            # the catalogue is tiny (~4K items) and in-batch negatives
+            # degenerate into the same handful of repeats.
+            n_neg = n_pos * cfg.negative_ratio
+            neg_users = np.repeat(users_ep, cfg.negative_ratio)
+            n_hard = int(n_neg * 0.5)
+            hard_neg = rng.choice(cfg.n_items, size=n_hard, replace=True, p=item_prob)
+            rand_neg = rng.integers(0, cfg.n_items, size=int((n_neg - n_hard) * 1.3))
+            sampled = np.concatenate([hard_neg, rand_neg])
+            rng.shuffle(sampled)
+            accepted = np.empty(n_neg, dtype=np.int64)
+            write = 0
+            read = 0
+            while write < n_neg and read < sampled.size:
+                u = int(neg_users[write])
+                cand = int(sampled[read])
+                if cand not in user_pos.get(u, ()):
+                    accepted[write] = cand
+                    write += 1
+                read += 1
+            retries = 0
+            max_retries = max(10 * n_neg, 1000)
+            while write < n_neg and retries < max_retries:
+                u = int(neg_users[write])
+                cand = int(rng.integers(0, cfg.n_items))
+                if cand not in user_pos.get(u, ()):
+                    accepted[write] = cand
+                    write += 1
+                retries += 1
+            if write < n_neg:
+                accepted = accepted[:write]
+                neg_users = neg_users[:write]
+                n_neg = write
+
+            users_all = np.concatenate([users_ep, neg_users])
+            items_all = np.concatenate([items_ep, accepted])
+            labels_all = np.concatenate(
+                [np.ones(n_pos, dtype=np.float32), np.zeros(n_neg, dtype=np.float32)]
+            )
+            weights_all = np.concatenate(
+                [weights_ep, np.ones(n_neg, dtype=np.float32)]
+            )
+            perm2 = rng.permutation(users_all.size)
+            users_all, items_all, labels_all, weights_all = (
+                users_all[perm2],
+                items_all[perm2],
+                labels_all[perm2],
+                weights_all[perm2],
+            )
+
+            loss_fn = nn.BCEWithLogitsLoss(reduction="none")
+            running_loss = 0.0
+            seen_rows = 0
+            for start in range(0, users_all.size, cfg.batch_size):
+                end = start + cfg.batch_size
+                u_idx = torch.from_numpy(users_all[start:end]).long()
+                i_idx = torch.from_numpy(items_all[start:end]).long()
+                labels = torch.from_numpy(labels_all[start:end]).float()
+                w_t = torch.from_numpy(weights_all[start:end]).float()
+                u_dense_batch = user_dense_t[u_idx]
+                i_g_batch = item_genres_t[i_idx]
+                i_t_batch = item_tags_t[i_idx]
+                i_d_batch = item_dense_t[i_idx]
+                optim.zero_grad()
+                preds = model(u_idx, i_idx, u_dense_batch, i_g_batch, i_t_batch, i_d_batch)
+                loss = (loss_fn(preds, labels) * w_t).mean()
+                loss.backward()
+                optim.step()
+                running_loss += float(loss.detach()) * u_idx.size(0)
+                seen_rows += u_idx.size(0)
+            loss_history.append(running_loss / max(seen_rows, 1))
+
+        if scheduler is not None:
+            scheduler.step()
+
+        # Validation NDCG monitoring + early stopping.
+        if val_user_sample.size > 0:
+            ndcg = _val_ndcg(
+                model,
+                user_dense_t,
+                item_genres_t,
+                item_tags_t,
+                item_dense_t,
+                truth=val_truth,
+                seen=user_pos,
+                user_ids=val_user_sample,
+                k=cfg.eval_k,
+            )
+            ndcg_history.append(ndcg)
+            if ndcg > best_ndcg + 1e-6:
+                best_ndcg = ndcg
+                best_epoch = epoch
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                epochs_since_improvement = 0
+            else:
+                epochs_since_improvement += 1
+                if epochs_since_improvement >= cfg.early_stopping_patience:
+                    break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     model.eval()
     user_vectors = model.all_user_vectors(user_dense_t)
@@ -443,7 +711,9 @@ def train_two_tower(
         item_vectors=item_vectors,
         spec=spec,
         user_stats=user_stats,
-        train_loss_history=history,
+        train_loss_history=loss_history,
+        val_ndcg_history=ndcg_history,
+        best_epoch=best_epoch,
     )
 
 

@@ -304,6 +304,65 @@ def test_save_load_two_tower_round_trip(
     assert "log_items_count_mean" in stats
 
 
+def test_train_two_tower_with_val_records_ndcg_history(
+    fixture_train: pd.DataFrame,
+    fixture_games: pd.DataFrame,
+    fixture_users: pd.DataFrame,
+) -> None:
+    """val_df=… enables NDCG monitoring + early-stopping rollback."""
+    # Hold out one positive per user as a tiny "validation" set so the
+    # NDCG monitor has something to score.
+    val_rows = fixture_train.groupby("user_idx").head(1).reset_index(drop=True)
+    train_rows = fixture_train.drop(fixture_train.groupby("user_idx").head(1).index).reset_index(
+        drop=True
+    )
+    cfg = TwoTowerConfig(
+        n_users=3,
+        n_items=3,
+        n_genres=0,
+        n_tags=0,
+        embedding_dim=8,
+        tower_hidden=(16,),
+        output_dim=8,
+        epochs=3,
+        batch_size=8,
+        sampled_softmax=False,  # BCE path — robust on a 3-item toy.
+        negative_ratio=1,
+        eval_k=2,
+        eval_max_users=3,
+    )
+    artifacts = train_two_tower(
+        train_rows, fixture_games, fixture_users, config=cfg, val_df=val_rows
+    )
+    assert len(artifacts.val_ndcg_history) >= 1
+    assert artifacts.best_epoch >= 0
+    assert all(0.0 <= v <= 1.0 for v in artifacts.val_ndcg_history)
+
+
+def test_train_two_tower_sampled_softmax_runs(
+    fixture_train: pd.DataFrame,
+    fixture_games: pd.DataFrame,
+    fixture_users: pd.DataFrame,
+) -> None:
+    """Sampled-softmax path produces finite loss + vectors on a tiny corpus."""
+    cfg = TwoTowerConfig(
+        n_users=3,
+        n_items=3,
+        n_genres=0,
+        n_tags=0,
+        embedding_dim=8,
+        tower_hidden=(16,),
+        output_dim=8,
+        epochs=2,
+        batch_size=4,
+        sampled_softmax=True,
+        hard_negatives_per_pos=1,
+    )
+    artifacts = train_two_tower(fixture_train, fixture_games, fixture_users, config=cfg)
+    assert all(np.isfinite(artifacts.train_loss_history))
+    assert artifacts.user_vectors.shape == (3, cfg.output_dim)
+
+
 def test_config_overrides_are_overridden_by_discovered_spec(
     fixture_train: pd.DataFrame,
     fixture_games: pd.DataFrame,
