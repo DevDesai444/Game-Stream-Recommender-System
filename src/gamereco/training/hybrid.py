@@ -537,9 +537,7 @@ def hybrid_rerank(
         and bundle.ncf_item_emb is not None
     )
 
-    als_cand = _als_top_candidates(
-        bundle.als, user_indices, known=known, n_candidates=n_candidates
-    )
+    als_cand = _als_top_candidates(bundle.als, user_indices, known=known, n_candidates=n_candidates)
     if use_ncf_retrieval:
         ncf_cand = _ncf_top_candidates(
             bundle.ncf_user_emb,

@@ -571,9 +571,9 @@ def train_two_tower(
                 w_t = torch.from_numpy(w_batch).float()
 
                 optim.zero_grad()
-                u_vecs = model.encode_user(u_idx_t, u_dense_batch)             # [B, d]
+                u_vecs = model.encode_user(u_idx_t, u_dense_batch)  # [B, d]
                 i_vecs = model.encode_item(i_idx_t, i_g_batch, i_t_batch, i_d_batch)  # [B+H, d]
-                logits = model.scale * (u_vecs @ i_vecs.T)                      # [B, B+H]
+                logits = model.scale * (u_vecs @ i_vecs.T)  # [B, B+H]
                 # logQ correction: subtract log(p_item) for each column
                 # so popular items don't dominate the softmax. This is
                 # the YouTube/Bengio sampling correction.
@@ -639,9 +639,7 @@ def train_two_tower(
             labels_all = np.concatenate(
                 [np.ones(n_pos, dtype=np.float32), np.zeros(n_neg, dtype=np.float32)]
             )
-            weights_all = np.concatenate(
-                [weights_ep, np.ones(n_neg, dtype=np.float32)]
-            )
+            weights_all = np.concatenate([weights_ep, np.ones(n_neg, dtype=np.float32)])
             perm2 = rng.permutation(users_all.size)
             users_all, items_all, labels_all, weights_all = (
                 users_all[perm2],
